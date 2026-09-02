@@ -4,7 +4,6 @@ import path from "node:path";
 const projectRoot = process.cwd();
 const questionnaireRoot = path.resolve(
   projectRoot,
-  "..",
   "CuestionarioDiagnóstico",
 );
 const areasDirectory = path.join(questionnaireRoot, "Áreas");

@@ -27,13 +27,19 @@ La aplicación queda disponible normalmente en `http://localhost:3000`.
 
 ## Mantener sincronizado el banco
 
-Las preguntas se leen desde `../CuestionarioDiagnóstico/Áreas` y las respuestas desde `../CuestionarioDiagnóstico/Claves`.
+El banco editable forma parte de este mismo repositorio:
+
+- `CuestionarioDiagnóstico/Áreas`: preguntas mostradas por la aplicación;
+- `CuestionarioDiagnóstico/Claves`: respuestas y explicaciones;
+- `CuestionarioDiagnóstico/00. Instrucciones y recorrido.md`: criterio del recorrido adaptativo.
 
 ```bash
 npm run data:generate
 ```
 
 El generador comprueba 13 áreas, 15 preguntas por área, tres alternativas, claves asociadas e identificadores únicos.
+
+Después de editar una pregunta o clave, ejecuta `npm run data:generate` antes de probar o publicar la aplicación.
 
 ## Validación
 
