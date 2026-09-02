@@ -89,6 +89,9 @@ const confidenceLabels: Record<AnswerConfidence, { label: string; hint: string }
   sure: { label: "Seguro", hint: "Podría explicar mi elección" },
 };
 
+type Theme = "light" | "dark";
+const THEME_STORAGE_KEY = "brujula-tic:theme";
+
 const allAreaIds = diagnosticAreas.map((area) => area.id);
 const areaNames = Object.fromEntries(
   diagnosticAreas.map((area) => [area.id, area.name]),
@@ -300,7 +303,7 @@ function SessionHeader({
                 </div>
               </div>
               {session.phase !== "results" && (
-                <button className="pause-button" type="button" onClick={onTogglePause}>
+                <button className="pause-button" type="button" onClick={onTogglePause} title="Atajo de teclado: P">
                   {session.paused ? "Reanudar" : "Pausar"}
                 </button>
               )}
@@ -324,6 +327,31 @@ function SessionHeader({
         </div>
       )}
     </>
+  );
+}
+
+function ThemeToggle({
+  theme,
+  onToggle,
+}: {
+  theme: Theme;
+  onToggle: () => void;
+}) {
+  const dark = theme === "dark";
+  return (
+    <button
+      className="theme-toggle"
+      type="button"
+      aria-label={dark ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
+      aria-pressed={dark}
+      onClick={onToggle}
+      title={dark ? "Tema claro" : "Tema oscuro"}
+    >
+      <span className={`theme-toggle-icon ${dark ? "is-dark" : ""}`} aria-hidden="true">
+        {dark ? "☀" : "☾"}
+      </span>
+      <span>{dark ? "Claro" : "Oscuro"}</span>
+    </button>
   );
 }
 
@@ -468,6 +496,7 @@ function ProfileScreen({
 function QuestionScreen({
   question,
   questionSeconds,
+  previousAnswerSeconds,
   selectedOption,
   confidence,
   paused,
@@ -477,6 +506,7 @@ function QuestionScreen({
 }: {
   question: DiagnosticQuestion;
   questionSeconds: number;
+  previousAnswerSeconds: number | null;
   selectedOption: DiagnosticOptionKey | null;
   confidence: AnswerConfidence | null;
   paused: boolean;
@@ -497,8 +527,14 @@ function QuestionScreen({
             <span className="question-id">{question.id}</span>
           </div>
           <div className="question-time">
-            <small>{paused ? "Pausada" : "En esta pregunta"}</small>
-            <strong>{formatTime(questionSeconds)}</strong>
+            <div>
+              <small>{paused ? "Pausada" : "En esta pregunta"}</small>
+              <strong>{formatTime(questionSeconds)}</strong>
+            </div>
+            <div className="previous-question-time">
+              <small>Respuesta anterior</small>
+              <strong>{previousAnswerSeconds === null ? "—" : formatTime(previousAnswerSeconds)}</strong>
+            </div>
           </div>
         </div>
 
@@ -548,7 +584,7 @@ function QuestionScreen({
         </fieldset>
 
         <p className="shortcut-hint" role="note">
-          Atajos: <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> o <kbd>A</kbd>/<kbd>B</kbd>/<kbd>C</kbd> para responder · <kbd>Q</kbd>/<kbd>G</kbd> al azar · <kbd>W</kbd>/<kbd>D</kbd> dudoso · <kbd>E</kbd>/<kbd>S</kbd> seguro.
+          Atajos: <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> o <kbd>A</kbd>/<kbd>B</kbd>/<kbd>C</kbd> para responder · <kbd>Q</kbd>/<kbd>G</kbd> al azar · <kbd>W</kbd>/<kbd>D</kbd> dudoso · <kbd>E</kbd>/<kbd>S</kbd> seguro · <kbd>P</kbd> pausar/reanudar.
         </p>
 
         <footer className="card-actions">
@@ -909,6 +945,8 @@ export default function Home() {
   const [appliedDraft, setAppliedDraft] = useState<string[]>([]);
   const [deepeningDraft, setDeepeningDraft] = useState<string[]>([]);
   const [profileNameDraft, setProfileNameDraft] = useState("");
+  const [theme, setTheme] = useState<Theme>("light");
+  const themeLoadedRef = useRef(false);
   const startedAtRef = useRef(new Date().toISOString());
   const answerLockRef = useRef(false);
   const answerSubmitRef = useRef<
@@ -951,6 +989,22 @@ export default function Home() {
   useEffect(() => {
     if (session) saveSession(window.localStorage, session);
   }, [session]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+      themeLoadedRef.current = true;
+      setTheme(storedTheme === "dark" ? "dark" : "light");
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    if (themeLoadedRef.current) {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    }
+  }, [theme]);
 
   const currentQuestion = session?.currentQuestionId
     ? questionsById[session.currentQuestionId]
@@ -1052,8 +1106,7 @@ export default function Home() {
   useEffect(() => {
     if (
       !currentPhase ||
-      !["essential", "applied", "deepening"].includes(currentPhase) ||
-      isPaused
+      ["intro", "results"].includes(currentPhase)
     ) {
       return;
     }
@@ -1063,6 +1116,18 @@ export default function Home() {
       if (target?.closest("input, textarea, select, button, [contenteditable=\"true\"]")) return;
 
       const key = event.key.toLowerCase();
+      if (key === "p") {
+        event.preventDefault();
+        setSession((previous) => previous ? {
+          ...previous,
+          paused: !previous.paused,
+          updatedAt: new Date().toISOString(),
+        } : previous);
+        return;
+      }
+
+      if (isPaused) return;
+
       const optionByKey: Record<string, DiagnosticOptionKey> = {
         "1": "A",
         "2": "B",
@@ -1229,6 +1294,15 @@ export default function Home() {
         currentQuestion.level === "essential" ? allAreaIds : currentQuestion.level === "applied" ? session.selectedAreas.applied : session.selectedAreas.deepening,
       )
     : [];
+  const currentQuestionIndex = currentQuestion
+    ? currentPhaseQuestions.findIndex((question) => question.id === currentQuestion.id)
+    : -1;
+  const previousQuestion = currentQuestionIndex > 0
+    ? currentPhaseQuestions[currentQuestionIndex - 1]
+    : null;
+  const previousAnswerSeconds = previousQuestion
+    ? session.responses[previousQuestion.id]?.activeSeconds ?? null
+    : null;
 
   return (
     <main className={`app-shell ${session.phase === "intro" || !session.profileName ? "intro-shell" : ""}`}>
@@ -1249,6 +1323,7 @@ export default function Home() {
               <QuestionScreen
                 question={currentQuestion}
                 questionSeconds={questionSeconds}
+                previousAnswerSeconds={previousAnswerSeconds}
                 selectedOption={selectedOption}
                 confidence={confidence}
                 paused={session.paused}
@@ -1294,6 +1369,7 @@ export default function Home() {
           </>
         )}
       </section>
+      <ThemeToggle theme={theme} onToggle={() => setTheme((current) => current === "dark" ? "light" : "dark")} />
     </main>
   );
 }

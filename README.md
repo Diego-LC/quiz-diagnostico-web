@@ -10,7 +10,9 @@ Aplicación web interactiva para responder el cuestionario de diagnóstico de á
 - propone hasta cuatro áreas para el nivel aplicado y hasta dos para profundización;
 - genera resultados por área y nivel, sin reducir el perfil a una sola nota;
 - solicita un nombre para crear un perfil local y guarda el avance en el almacenamiento local del navegador;
-- permite responder con teclado (`1`/`2`/`3` o `A`/`B`/`C`) y marcar confianza (`Q`/`G`, `W`/`D`, `E`/`S`), avanzando automáticamente;
+- muestra el tiempo de la pregunta actual y el tiempo empleado en la respuesta anterior;
+- permite responder con teclado (`1`/`2`/`3` o `A`/`B`/`C`), marcar confianza (`Q`/`G`, `W`/`D`, `E`/`S`) y pausar/reanudar (`P`), avanzando automáticamente;
+- ofrece un tema claro u oscuro con cambio animado y preferencia guardada localmente;
 - interpreta formato Markdown en preguntas, alternativas y explicaciones (por ejemplo, código entre comillas inversas);
 - permite descargar los resultados en JSON e imprimir el resumen.
 

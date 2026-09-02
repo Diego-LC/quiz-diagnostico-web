@@ -13,6 +13,20 @@
   --navy: #152d3b;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e7eee9;
+  --muted: #aab8b0;
+  --paper: #101714;
+  --card: #19231f;
+  --line: #34473e;
+  --green: #69c59f;
+  --green-dark: #9be2bf;
+  --green-soft: #203d31;
+  --amber: #e8ae55;
+  --navy: #0b171e;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -31,6 +45,7 @@ body {
     var(--paper);
   font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
   line-height: 1.45;
+  transition: background-color 260ms ease, color 260ms ease;
 }
 
 button,
@@ -235,6 +250,53 @@ button {
   flex-wrap: wrap;
 }
 
+.theme-toggle {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 12px 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 12px 28px rgb(16 28 23 / 18%);
+  font-size: 10px;
+  font-weight: 750;
+  transition: background-color 260ms ease, border-color 260ms ease, color 260ms ease, transform 160ms ease;
+}
+
+.theme-toggle:hover {
+  transform: translateY(-2px);
+}
+
+.theme-toggle:focus-visible {
+  outline: 3px solid rgb(22 120 91 / 28%);
+  outline-offset: 3px;
+}
+
+.theme-toggle-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-size: 14px;
+  line-height: 1;
+  transform: rotate(-12deg);
+  transition: transform 320ms ease, background-color 260ms ease, color 260ms ease;
+}
+
+.theme-toggle-icon.is-dark {
+  transform: rotate(180deg);
+}
+
 .profile-chip {
   max-width: 220px;
   overflow: hidden;
@@ -429,15 +491,28 @@ button {
 }
 
 .question-time {
+  display: flex;
+  align-items: center;
   gap: 9px;
   color: var(--muted);
 }
 
+.question-time > div {
+  min-width: 72px;
+}
+
+.previous-question-time {
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+
 .question-time small {
+  display: block;
   font-size: 10px;
 }
 
 .question-time strong {
+  display: block;
   font-family: ui-monospace, "Cascadia Code", monospace;
   color: var(--ink);
   font-size: 14px;
@@ -1710,6 +1785,102 @@ button:disabled {
   font-size: 11px;
 }
 
+/* Tema oscuro */
+
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(circle at 78% 12%, rgb(214 138 45 / 10%), transparent 24rem),
+    linear-gradient(120deg, rgb(105 197 159 / 5%), transparent 40%),
+    var(--paper);
+}
+
+:root[data-theme="dark"] .session-clock,
+:root[data-theme="dark"] .pause-button,
+:root[data-theme="dark"] .theme-toggle,
+:root[data-theme="dark"] .answers label,
+:root[data-theme="dark"] .profile-form input,
+:root[data-theme="dark"] .route-overview article,
+:root[data-theme="dark"] .area-choice {
+  background: #1c2923;
+  border-color: #3b5045;
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .answers label:hover,
+:root[data-theme="dark"] .area-choice:hover {
+  border-color: #6bbf9a;
+}
+
+:root[data-theme="dark"] .answers label.selected {
+  background: #214435;
+}
+
+:root[data-theme="dark"] .answers label > span {
+  border-color: #53685d;
+  color: #c4d5cb;
+}
+
+:root[data-theme="dark"] .confidence-options {
+  background: #26352e;
+}
+
+:root[data-theme="dark"] .confidence-options button {
+  color: #c4d5cb;
+}
+
+:root[data-theme="dark"] .confidence-options button:hover,
+:root[data-theme="dark"] .confidence-options button:focus-visible,
+:root[data-theme="dark"] .confidence-options button.selected {
+  background: #e8f2eb;
+  color: #123c2d;
+}
+
+:root[data-theme="dark"] .intro-callout {
+  background: #302a20;
+  color: #f4dfb6;
+}
+
+:root[data-theme="dark"] .intro-callout p,
+:root[data-theme="dark"] .shortcut-hint,
+:root[data-theme="dark"] .card-actions > p {
+  color: #c4cfc8;
+}
+
+:root[data-theme="dark"] .timer-note {
+  background: #2b2a22;
+  color: #f2e0ba;
+}
+
+:root[data-theme="dark"] .inline-code {
+  border-color: #496957;
+  background: #244334;
+  color: #b8efce;
+}
+
+:root[data-theme="dark"] kbd {
+  border-color: #53685d;
+  background: #26352e;
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .progress-line {
+  background: #33443b;
+}
+
+html,
+.question-card,
+.journey-card,
+.intro-card,
+.profile-card,
+.principles-card,
+.interest-card,
+.selection-card,
+.results-hero,
+.result-section,
+.next-step-card {
+  transition: background-color 260ms ease, border-color 260ms ease, color 260ms ease;
+}
+
 @media print {
   .area-rail,
   .clock-cluster,
@@ -1782,6 +1953,11 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
+  .theme-toggle {
+    right: 15px;
+    bottom: 15px;
+  }
+
   .quiz-workspace {
     padding: 22px 15px 38px;
   }
