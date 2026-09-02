@@ -911,6 +911,9 @@ export default function Home() {
   const [profileNameDraft, setProfileNameDraft] = useState("");
   const startedAtRef = useRef(new Date().toISOString());
   const answerLockRef = useRef(false);
+  const answerSubmitRef = useRef<
+    (option: DiagnosticOptionKey, answerConfidence: AnswerConfidence) => void
+  >(() => undefined);
 
   useEffect(() => {
     const stored = loadSession(window.localStorage);
