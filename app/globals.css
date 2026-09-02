@@ -227,6 +227,28 @@ button {
   gap: 30px;
 }
 
+.header-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.profile-chip {
+  max-width: 220px;
+  overflow: hidden;
+  padding: 9px 12px;
+  border: 1px solid #d7e5dc;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .clock-cluster {
   display: flex;
   align-items: stretch;
@@ -513,6 +535,41 @@ button {
   border: 4px solid var(--green);
 }
 
+.inline-code {
+  padding: 0.1em 0.35em;
+  border: 1px solid #d6e3dc;
+  border-radius: 4px;
+  background: #edf5f0;
+  color: var(--green-dark);
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.9em;
+}
+
+.question-card h2 .inline-code {
+  font-size: 0.82em;
+}
+
+.shortcut-hint {
+  margin: 14px 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 19px;
+  padding: 1px 4px;
+  border: 1px solid #c9ccc5;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #f4f2eb;
+  color: var(--ink);
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 9px;
+  text-align: center;
+}
+
 .confidence-row {
   display: flex;
   align-items: center;
@@ -790,6 +847,7 @@ button:disabled {
 }
 
 .intro-card,
+.profile-card,
 .principles-card,
 .interest-card,
 .selection-card,
@@ -804,6 +862,66 @@ button:disabled {
 
 .intro-card {
   padding: clamp(28px, 4vw, 52px);
+}
+
+.profile-layout {
+  display: grid;
+  min-height: calc(100vh - 150px);
+  place-items: center;
+  margin-top: 28px;
+}
+
+.profile-card {
+  width: min(680px, 100%);
+  padding: clamp(28px, 5vw, 58px);
+}
+
+.profile-card h2 {
+  max-width: 600px;
+  margin: 13px 0 14px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(30px, 4vw, 48px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.03;
+}
+
+.profile-form {
+  display: grid;
+  gap: 9px;
+  max-width: 470px;
+  margin-top: 30px;
+}
+
+.profile-form label {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.profile-form input {
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid #cfcfc6;
+  border-radius: 11px;
+  background: #fffefb;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.profile-form input:focus {
+  border-color: var(--green);
+  outline: 3px solid rgb(22 120 91 / 18%);
+}
+
+.profile-form button {
+  margin-top: 8px;
+}
+
+.profile-note {
+  margin: 22px 0 0;
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .intro-kicker {
@@ -1673,6 +1791,11 @@ button:disabled {
     flex-direction: column;
   }
 
+  .header-tools {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .topbar h1 {
     font-size: 30px;
   }
@@ -1743,6 +1866,16 @@ button:disabled {
 
   .intro-card {
     padding: 24px 18px;
+  }
+
+  .profile-layout {
+    min-height: calc(100vh - 110px);
+    margin-top: 12px;
+  }
+
+  .profile-card {
+    padding: 25px 18px;
+    border-radius: 15px;
   }
 
   .route-overview {

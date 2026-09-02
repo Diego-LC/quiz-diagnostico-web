@@ -1,4 +1,4 @@
-export const DIAGNOSTIC_SESSION_VERSION = 1 as const;
+export const DIAGNOSTIC_SESSION_VERSION = 2 as const;
 export const DIAGNOSTIC_STORAGE_KEY = "brujula-tic:diagnostic-session";
 
 export type AnswerOption = "A" | "B" | "C";
@@ -36,6 +36,8 @@ export interface AreaInterest {
 export interface DiagnosticSessionState {
   version: typeof DIAGNOSTIC_SESSION_VERSION;
   sessionId: string;
+  /** Nombre visible del perfil; se guarda únicamente en el dispositivo. */
+  profileName: string;
   phase: DiagnosticPhase;
   responses: Record<string, QuestionResponse>;
   interests: Record<string, AreaInterest>;
@@ -230,6 +232,7 @@ export function createInitialSession(options: {
   return {
     version: DIAGNOSTIC_SESSION_VERSION,
     sessionId: asNonEmptyString(options.sessionId, createSessionId()),
+    profileName: "",
     phase: "intro",
     responses: {},
     interests: {},
@@ -281,6 +284,7 @@ export function normalizeSession(
   return {
     version: DIAGNOSTIC_SESSION_VERSION,
     sessionId: asNonEmptyString(raw.sessionId, createSessionId()),
+    profileName: asNonEmptyString(raw.profileName, ""),
     phase: asPhase(raw.phase),
     responses: normalizeResponses(responseSource, createdAt, updatedAt),
     interests: normalizeInterests(interestSource, updatedAt),

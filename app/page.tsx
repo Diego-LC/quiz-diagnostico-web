@@ -29,6 +29,7 @@ import {
   type DiagnosticSessionState,
   type InterestScore,
 } from "./lib/session";
+import InlineMarkdown from "./components/InlineMarkdown";
 
 const levelLabels: Record<DiagnosticLevel, string> = {
   essential: "Nivel 1 · Esencial",
@@ -262,7 +263,13 @@ function SessionHeader({
   session: DiagnosticSessionState;
   onTogglePause: () => void;
 }) {
-  const copy = phaseCopy[session.phase];
+  const copy = session.profileName
+    ? phaseCopy[session.phase]
+    : {
+        eyebrow: "Perfil local",
+        title: "Personaliza tu recorrido diagnóstico.",
+        short: "Perfil",
+      };
   const answered = Object.keys(session.responses).length;
   const expected = routeLength(session);
   const progress = session.phase === "results" ? 100 : Math.min(100, (answered / expected) * 100);
@@ -274,25 +281,32 @@ function SessionHeader({
           <span className="eyebrow">{copy.eyebrow}</span>
           <h1>{copy.title}</h1>
         </div>
-        {session.phase !== "intro" && (
-          <div className="clock-cluster">
-            <div
-              className={`session-clock ${session.paused ? "paused" : ""}`}
-              aria-label={`Tiempo activo de sesión ${formatTime(session.activeSecondsTotal)}`}
-            >
-              <span className="clock-dot" aria-hidden="true" />
-              <div>
-                <small>{session.paused ? "Contador pausado" : "Tiempo activo"}</small>
-                <strong>{formatTime(session.activeSecondsTotal)}</strong>
+        <div className="header-tools">
+          {session.profileName && (
+            <span className="profile-chip" title="Perfil guardado en este dispositivo">
+              Perfil local · {session.profileName}
+            </span>
+          )}
+          {session.phase !== "intro" && (
+            <div className="clock-cluster">
+              <div
+                className={`session-clock ${session.paused ? "paused" : ""}`}
+                aria-label={`Tiempo activo de sesión ${formatTime(session.activeSecondsTotal)}`}
+              >
+                <span className="clock-dot" aria-hidden="true" />
+                <div>
+                  <small>{session.paused ? "Contador pausado" : "Tiempo activo"}</small>
+                  <strong>{formatTime(session.activeSecondsTotal)}</strong>
+                </div>
               </div>
+              {session.phase !== "results" && (
+                <button className="pause-button" type="button" onClick={onTogglePause}>
+                  {session.paused ? "Reanudar" : "Pausar"}
+                </button>
+              )}
             </div>
-            {session.phase !== "results" && (
-              <button className="pause-button" type="button" onClick={onTogglePause}>
-                {session.paused ? "Reanudar" : "Pausar"}
-              </button>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </header>
       {session.phase !== "intro" && (
         <div className="progress-wrap">
@@ -407,6 +421,50 @@ function IntroScreen({ onStart }: { onStart: () => void }) {
   );
 }
 
+function ProfileScreen({
+  value,
+  onChange,
+  onSubmit,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="profile-layout">
+      <section className="profile-card">
+        <span className="intro-kicker">Tu diagnóstico, guardado localmente</span>
+        <h2>Antes de comenzar, crea tu perfil.</h2>
+        <p className="intro-lead">
+          Usaremos este nombre para identificar tu avance y tus resultados en este navegador.
+          No se envía a ningún servidor.
+        </p>
+        <form
+          className="profile-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <label htmlFor="profile-name">¿Cómo quieres que te llamemos?</label>
+          <input
+            id="profile-name"
+            maxLength={60}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Por ejemplo, Diego"
+            required
+            value={value}
+          />
+          <button className="button-primary button-large" type="submit" disabled={!value.trim()}>
+            Guardar perfil y continuar <span aria-hidden="true">→</span>
+          </button>
+        </form>
+        <p className="profile-note">Puedes borrar el avance completo desde la pantalla de resultados.</p>
+      </section>
+    </div>
+  );
+}
+
 function QuestionScreen({
   question,
   questionSeconds,
@@ -416,7 +474,6 @@ function QuestionScreen({
   phaseQuestions,
   onSelectOption,
   onSelectConfidence,
-  onSubmit,
 }: {
   question: DiagnosticQuestion;
   questionSeconds: number;
@@ -426,7 +483,6 @@ function QuestionScreen({
   phaseQuestions: DiagnosticQuestion[];
   onSelectOption: (option: DiagnosticOptionKey) => void;
   onSelectConfidence: (confidence: AnswerConfidence) => void;
-  onSubmit: () => void;
 }) {
   const index = phaseQuestions.findIndex((item) => item.id === question.id);
   const areaIndex =
@@ -450,7 +506,7 @@ function QuestionScreen({
           <p className="area-name">{question.areaNumber}. {question.areaName}</p>
           <span>Pregunta {areaIndex} de 5 · {index + 1} de {phaseQuestions.length} en esta pasada</span>
         </div>
-        <h2>{question.stem}</h2>
+        <h2><InlineMarkdown text={question.stem} /></h2>
 
         <fieldset className="answers" disabled={paused}>
           <legend className="sr-only">Selecciona una respuesta</legend>
@@ -464,7 +520,7 @@ function QuestionScreen({
                 value={option.key}
               />
               <span>{option.key}</span>
-              <p>{option.text}</p>
+              <p><InlineMarkdown text={option.text} /></p>
               <i aria-hidden="true" />
             </label>
           ))}
@@ -491,16 +547,12 @@ function QuestionScreen({
           </div>
         </fieldset>
 
+        <p className="shortcut-hint" role="note">
+          Atajos: <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> o <kbd>A</kbd>/<kbd>B</kbd>/<kbd>C</kbd> para responder · <kbd>Q</kbd>/<kbd>G</kbd> al azar · <kbd>W</kbd>/<kbd>D</kbd> dudoso · <kbd>E</kbd>/<kbd>S</kbd> seguro.
+        </p>
+
         <footer className="card-actions">
-          <p>La respuesta correcta y su explicación aparecerán al terminar tu recorrido.</p>
-          <button
-            className="button-primary"
-            disabled={!selectedOption || !confidence || paused}
-            type="button"
-            onClick={onSubmit}
-          >
-            Guardar y continuar <span aria-hidden="true">→</span>
-          </button>
+          <p>Al elegir una alternativa y tu nivel de confianza, la respuesta se guarda y avanzas automáticamente. La explicación aparecerá al terminar tu recorrido.</p>
         </footer>
       </article>
       <JourneyCard phase={question.level === "essential" ? "essential" : question.level === "applied" ? "applied" : "deepening"} />
@@ -815,11 +867,11 @@ function ResultsScreen({
                   <em>{confidenceLabels[response.confidence].label} · {formatTime(response.activeSeconds)}</em>
                 </summary>
                 <div>
-                  <h3>{question.stem}</h3>
-                  <p><strong>Elegiste {response.selectedOption}:</strong> {selectedText}</p>
-                  <p className="correct-answer"><strong>Respuesta correcta {question.correctOption}:</strong> {question.options.find((option) => option.key === question.correctOption)?.text}</p>
-                  <p><strong>Por qué:</strong> {question.explanation}</p>
-                  <small>Evalúa: {question.evaluates}</small>
+                  <h3><InlineMarkdown text={question.stem} /></h3>
+                  <p><strong>Elegiste {response.selectedOption}:</strong> <InlineMarkdown text={selectedText ?? ""} /></p>
+                  <p className="correct-answer"><strong>Respuesta correcta {question.correctOption}:</strong> <InlineMarkdown text={question.options.find((option) => option.key === question.correctOption)?.text ?? ""} /></p>
+                  <p><strong>Por qué:</strong> <InlineMarkdown text={question.explanation} /></p>
+                  <small>Evalúa: <InlineMarkdown text={question.evaluates} /></small>
                 </div>
               </details>
             );
@@ -856,13 +908,16 @@ export default function Home() {
   const [interestDraft, setInterestDraft] = useState<InterestDraft>({ enjoyed: null, learnMore: null, projectInterest: null });
   const [appliedDraft, setAppliedDraft] = useState<string[]>([]);
   const [deepeningDraft, setDeepeningDraft] = useState<string[]>([]);
+  const [profileNameDraft, setProfileNameDraft] = useState("");
   const startedAtRef = useRef(new Date().toISOString());
+  const answerLockRef = useRef(false);
 
   useEffect(() => {
     const stored = loadSession(window.localStorage);
     const repaired = repairLoadedSession(stored ?? createInitialSession());
     const timeout = window.setTimeout(() => {
       setSession(repaired);
+      setProfileNameDraft(repaired.profileName);
       const restoredResponses = toScoringResponses(repaired);
       const restoredInterests = toScoringInterests(repaired);
       if (repaired.phase === "select-applied") {
@@ -924,14 +979,6 @@ export default function Home() {
     [deepeningAvailable, scoringResponses, scoringInterests],
   );
 
-  if (!session) {
-    return <main className="loading-screen"><span className="brand-mark">B</span><p>Preparando tu diagnóstico…</p></main>;
-  }
-
-  const setPhase = (phase: DiagnosticPhase, currentQuestionId: string | null = null) => {
-    setSession((previous) => previous ? { ...previous, phase, currentQuestionId, updatedAt: new Date().toISOString() } : previous);
-  };
-
   const prepareQuestion = () => {
     setSelectedOption(null);
     setConfidence(null);
@@ -939,27 +986,30 @@ export default function Home() {
     startedAtRef.current = new Date().toISOString();
   };
 
-  const handleStart = () => {
-    prepareQuestion();
-    setPhase("essential", questionsForLevel("essential")[0].id);
-  };
-
-  const handleAnswer = () => {
-    if (!currentQuestion || !selectedOption || !confidence) return;
+  const handleAnswer = (answerOption: DiagnosticOptionKey, answerConfidence: AnswerConfidence) => {
+    if (!session || !currentQuestion || answerLockRef.current) return;
+    answerLockRef.current = true;
     const now = new Date().toISOString();
     const nextResponses = {
       ...session.responses,
       [currentQuestion.id]: {
         questionId: currentQuestion.id,
-        selectedOption,
-        correct: selectedOption === currentQuestion.correctOption,
-        confidence,
+        selectedOption: answerOption,
+        correct: answerOption === currentQuestion.correctOption,
+        confidence: answerConfidence,
         activeSeconds: questionSeconds,
         startedAt: startedAtRef.current,
         answeredAt: now,
       },
     };
-    const phaseQuestions = questionsForLevel(currentQuestion.level, currentQuestion.level === "essential" ? allAreaIds : currentQuestion.level === "applied" ? session.selectedAreas.applied : session.selectedAreas.deepening);
+    const phaseQuestions = questionsForLevel(
+      currentQuestion.level,
+      currentQuestion.level === "essential"
+        ? allAreaIds
+        : currentQuestion.level === "applied"
+          ? session.selectedAreas.applied
+          : session.selectedAreas.deepening,
+    );
     const index = phaseQuestions.findIndex((question) => question.id === currentQuestion.id);
     const next = phaseQuestions[index + 1] ?? null;
     const completedArea = !next || next.areaId !== currentQuestion.areaId;
@@ -987,6 +1037,93 @@ export default function Home() {
     }
     prepareQuestion();
     setSession({ ...session, responses: nextResponses, phase, currentQuestionId, updatedAt: now });
+    window.setTimeout(() => {
+      answerLockRef.current = false;
+    }, 0);
+  };
+
+  useEffect(() => {
+    answerSubmitRef.current = handleAnswer;
+  });
+
+  useEffect(() => {
+    if (
+      !currentPhase ||
+      !["essential", "applied", "deepening"].includes(currentPhase) ||
+      isPaused
+    ) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, button, [contenteditable=\"true\"]")) return;
+
+      const key = event.key.toLowerCase();
+      const optionByKey: Record<string, DiagnosticOptionKey> = {
+        "1": "A",
+        "2": "B",
+        "3": "C",
+        a: "A",
+        b: "B",
+        c: "C",
+      };
+      const confidenceByKey: Record<string, AnswerConfidence> = {
+        q: "guess",
+        g: "guess",
+        w: "unsure",
+        d: "unsure",
+        e: "sure",
+        s: "sure",
+      };
+
+      if (optionByKey[key]) {
+        event.preventDefault();
+        const nextOption = optionByKey[key];
+        setSelectedOption(nextOption);
+        if (confidence) answerSubmitRef.current(nextOption, confidence);
+        return;
+      }
+
+      if (confidenceByKey[key]) {
+        event.preventDefault();
+        const nextConfidence = confidenceByKey[key];
+        setConfidence(nextConfidence);
+        if (selectedOption) answerSubmitRef.current(selectedOption, nextConfidence);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [confidence, currentPhase, isPaused, selectedOption]);
+
+  if (!session) {
+    return <main className="loading-screen"><span className="brand-mark">B</span><p>Preparando tu diagnóstico…</p></main>;
+  }
+
+  const setPhase = (phase: DiagnosticPhase, currentQuestionId: string | null = null) => {
+    setSession((previous) => previous ? { ...previous, phase, currentQuestionId, updatedAt: new Date().toISOString() } : previous);
+  };
+
+  const handleProfileSubmit = () => {
+    const profileName = profileNameDraft.trim();
+    if (!profileName) return;
+    setSession({ ...session, profileName, updatedAt: new Date().toISOString() });
+  };
+
+  const handleStart = () => {
+    prepareQuestion();
+    setPhase("essential", questionsForLevel("essential")[0].id);
+  };
+
+  const handleOptionSelect = (option: DiagnosticOptionKey) => {
+    setSelectedOption(option);
+    if (confidence) handleAnswer(option, confidence);
+  };
+
+  const handleConfidenceSelect = (value: AnswerConfidence) => {
+    setConfidence(value);
+    if (selectedOption) handleAnswer(selectedOption, value);
   };
 
   const pendingInterest = findPendingInterestArea(session);
@@ -1069,10 +1206,12 @@ export default function Home() {
   const handleReset = () => {
     if (!window.confirm("¿Borrar todo el avance guardado y comenzar de nuevo?")) return;
     clearSession(window.localStorage);
+    answerLockRef.current = false;
     prepareQuestion();
     setSession(createInitialSession());
     setAppliedDraft([]);
     setDeepeningDraft([]);
+    setProfileNameDraft("");
   };
 
   const appliedSuggestionReasons = Object.fromEntries(
@@ -1089,59 +1228,68 @@ export default function Home() {
     : [];
 
   return (
-    <main className={`app-shell ${session.phase === "intro" ? "intro-shell" : ""}`}>
-      {session.phase !== "intro" && <ProgressRail session={session} />}
-      <section className={`quiz-workspace ${session.phase === "intro" ? "intro-workspace" : ""}`}>
+    <main className={`app-shell ${session.phase === "intro" || !session.profileName ? "intro-shell" : ""}`}>
+      {session.profileName && session.phase !== "intro" && <ProgressRail session={session} />}
+      <section className={`quiz-workspace ${session.phase === "intro" || !session.profileName ? "intro-workspace" : ""}`}>
         <SessionHeader session={session} onTogglePause={() => setSession({ ...session, paused: !session.paused, updatedAt: new Date().toISOString() })} />
 
-        {session.phase === "intro" && <IntroScreen onStart={handleStart} />}
-        {currentQuestion && ["essential", "applied", "deepening"].includes(session.phase) && (
-          <QuestionScreen
-            question={currentQuestion}
-            questionSeconds={questionSeconds}
-            selectedOption={selectedOption}
-            confidence={confidence}
-            paused={session.paused}
-            phaseQuestions={currentPhaseQuestions}
-            onSelectOption={setSelectedOption}
-            onSelectConfidence={setConfidence}
-            onSubmit={handleAnswer}
+        {!session.profileName ? (
+          <ProfileScreen
+            value={profileNameDraft}
+            onChange={setProfileNameDraft}
+            onSubmit={handleProfileSubmit}
           />
+        ) : (
+          <>
+            {session.phase === "intro" && <IntroScreen onStart={handleStart} />}
+            {currentQuestion && ["essential", "applied", "deepening"].includes(session.phase) && (
+              <QuestionScreen
+                question={currentQuestion}
+                questionSeconds={questionSeconds}
+                selectedOption={selectedOption}
+                confidence={confidence}
+                paused={session.paused}
+                phaseQuestions={currentPhaseQuestions}
+                onSelectOption={handleOptionSelect}
+                onSelectConfidence={handleConfidenceSelect}
+              />
+            )}
+            {session.phase === "interest" && pendingInterest && (
+              <InterestScreen
+                areaName={pendingInterest.name}
+                draft={interestDraft}
+                completedAreas={Object.keys(session.interests).length + 1}
+                onChange={(field, value) => setInterestDraft((current) => ({ ...current, [field]: value }))}
+                onSubmit={handleInterestSubmit}
+              />
+            )}
+            {session.phase === "select-applied" && (
+              <AreaSelectionScreen
+                kind="applied"
+                session={session}
+                selected={appliedDraft}
+                suggestionIds={appliedSuggestions.map((item) => item.areaId)}
+                suggestionReasons={appliedSuggestionReasons}
+                availableAreaIds={allAreaIds}
+                onToggle={(areaId) => toggleArea("applied", areaId)}
+                onContinue={confirmApplied}
+              />
+            )}
+            {session.phase === "select-deepening" && (
+              <AreaSelectionScreen
+                kind="deepening"
+                session={session}
+                selected={deepeningDraft}
+                suggestionIds={deepeningSuggestions.map((item) => item.areaId)}
+                suggestionReasons={deepeningSuggestionReasons}
+                availableAreaIds={deepeningAvailable}
+                onToggle={(areaId) => toggleArea("deepening", areaId)}
+                onContinue={confirmDeepening}
+              />
+            )}
+            {session.phase === "results" && <ResultsScreen session={session} onDownload={handleDownload} onReset={handleReset} />}
+          </>
         )}
-        {session.phase === "interest" && pendingInterest && (
-          <InterestScreen
-            areaName={pendingInterest.name}
-            draft={interestDraft}
-            completedAreas={Object.keys(session.interests).length + 1}
-            onChange={(field, value) => setInterestDraft((current) => ({ ...current, [field]: value }))}
-            onSubmit={handleInterestSubmit}
-          />
-        )}
-        {session.phase === "select-applied" && (
-          <AreaSelectionScreen
-            kind="applied"
-            session={session}
-            selected={appliedDraft}
-            suggestionIds={appliedSuggestions.map((item) => item.areaId)}
-            suggestionReasons={appliedSuggestionReasons}
-            availableAreaIds={allAreaIds}
-            onToggle={(areaId) => toggleArea("applied", areaId)}
-            onContinue={confirmApplied}
-          />
-        )}
-        {session.phase === "select-deepening" && (
-          <AreaSelectionScreen
-            kind="deepening"
-            session={session}
-            selected={deepeningDraft}
-            suggestionIds={deepeningSuggestions.map((item) => item.areaId)}
-            suggestionReasons={deepeningSuggestionReasons}
-            availableAreaIds={deepeningAvailable}
-            onToggle={(areaId) => toggleArea("deepening", areaId)}
-            onContinue={confirmDeepening}
-          />
-        )}
-        {session.phase === "results" && <ResultsScreen session={session} onDownload={handleDownload} onReset={handleReset} />}
       </section>
     </main>
   );

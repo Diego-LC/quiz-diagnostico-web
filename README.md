@@ -9,10 +9,13 @@ Aplicación web interactiva para responder el cuestionario de diagnóstico de á
 - solicita tres valoraciones de interés al terminar cada área;
 - propone hasta cuatro áreas para el nivel aplicado y hasta dos para profundización;
 - genera resultados por área y nivel, sin reducir el perfil a una sola nota;
-- guarda el avance en el almacenamiento local del navegador;
+- solicita un nombre para crear un perfil local y guarda el avance en el almacenamiento local del navegador;
+- permite responder con teclado (`1`/`2`/`3` o `A`/`B`/`C`) y marcar confianza (`Q`/`G`, `W`/`D`, `E`/`S`), avanzando automáticamente;
+- interpreta formato Markdown en preguntas, alternativas y explicaciones (por ejemplo, código entre comillas inversas);
 - permite descargar los resultados en JSON e imprimir el resumen.
 
 El tiempo no limita ni penaliza. El contador se pausa manualmente y deja de avanzar cuando la pestaña no está visible.
+El perfil y el avance son locales a cada navegador y dispositivo; no constituyen una cuenta ni una sincronización en la nube.
 
 ## Ejecutar en local
 
@@ -40,6 +43,13 @@ npm run data:generate
 El generador comprueba 13 áreas, 15 preguntas por área, tres alternativas, claves asociadas e identificadores únicos.
 
 Después de editar una pregunta o clave, ejecuta `npm run data:generate` antes de probar o publicar la aplicación.
+
+## Licencias
+
+- El código de la aplicación, scripts y pruebas se distribuye bajo [MIT](LICENSE).
+- El banco de preguntas y el contenido educativo se distribuyen bajo [CC BY-NC-SA 4.0](LICENSE-CONTENIDOS.md).
+
+Si incorporas material de terceros, conserva la atribución y la licencia que corresponda a su autoría.
 
 ## Validación
 
