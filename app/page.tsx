@@ -1113,7 +1113,7 @@ export default function Home() {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, button, [contenteditable=\"true\"]")) return;
+      if (target?.closest("input, textarea, select, [contenteditable=\"true\"]")) return;
 
       const key = event.key.toLowerCase();
       if (key === "p") {
@@ -1302,7 +1302,10 @@ export default function Home() {
     : null;
   const previousAnswerSeconds = previousQuestion
     ? session.responses[previousQuestion.id]?.activeSeconds ?? null
-    : null;
+    : Object.values(session.responses)
+        .filter((response) => response.questionId !== currentQuestion?.id)
+        .sort((a, b) => a.answeredAt.localeCompare(b.answeredAt))
+        .at(-1)?.activeSeconds ?? null;
 
   return (
     <main className={`app-shell ${session.phase === "intro" || !session.profileName ? "intro-shell" : ""}`}>
