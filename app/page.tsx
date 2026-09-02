@@ -1044,7 +1044,7 @@ export default function Home() {
   };
 
   const handleAnswer = (answerOption: DiagnosticOptionKey, answerConfidence: AnswerConfidence) => {
-    if (!session || !currentQuestion || answerLockRef.current) return;
+    if (!session || session.paused || !currentQuestion || answerLockRef.current) return;
     answerLockRef.current = true;
     const now = new Date().toISOString();
     const nextResponses = {
@@ -1126,7 +1126,10 @@ export default function Home() {
         return;
       }
 
-      if (isPaused) return;
+      if (isPaused) {
+        event.preventDefault();
+        return;
+      }
 
       const optionByKey: Record<string, DiagnosticOptionKey> = {
         "1": "A",
@@ -1185,11 +1188,13 @@ export default function Home() {
   };
 
   const handleOptionSelect = (option: DiagnosticOptionKey) => {
+    if (session.paused) return;
     setSelectedOption(option);
     if (confidence) handleAnswer(option, confidence);
   };
 
   const handleConfidenceSelect = (value: AnswerConfidence) => {
+    if (session.paused) return;
     setConfidence(value);
     if (selectedOption) handleAnswer(selectedOption, value);
   };
