@@ -1800,7 +1800,8 @@ button:disabled {
 :root[data-theme="dark"] .answers label,
 :root[data-theme="dark"] .profile-form input,
 :root[data-theme="dark"] .route-overview article,
-:root[data-theme="dark"] .area-choice {
+:root[data-theme="dark"] .area-choice,
+:root[data-theme="dark"] .likert-row {
   background: #1c2923;
   border-color: #3b5045;
   color: var(--ink);
@@ -1826,6 +1827,23 @@ button:disabled {
 
 :root[data-theme="dark"] .confidence-options button {
   color: #c4d5cb;
+}
+
+:root[data-theme="dark"] .likert-row button {
+  border-color: #53685d;
+  background: #26352e;
+  color: #c4d5cb;
+}
+
+:root[data-theme="dark"] .likert-row small {
+  color: #aab8b0;
+}
+
+:root[data-theme="dark"] .likert-row button:hover,
+:root[data-theme="dark"] .likert-row button.selected {
+  border-color: var(--green);
+  background: var(--green);
+  color: #102b25;
 }
 
 :root[data-theme="dark"] .confidence-options button:hover,
