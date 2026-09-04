@@ -8,7 +8,7 @@ import {
   type DiagnosticLevel,
   type DiagnosticOptionKey,
   type DiagnosticQuestion,
-} from "./data/questions.generated";
+} from "./data/questions.v2.generated";
 import {
   buildRecommendations,
   calculateMetricsByArea,
@@ -29,6 +29,18 @@ import {
   type DiagnosticSessionState,
   type InterestScore,
 } from "./lib/session";
+import {
+  chooseConfirmations,
+  questionsForStage,
+  routeBaseEntries,
+  routeBaseCount,
+} from "./lib/route";
+import {
+  appendAttemptHistory,
+  loadAttemptHistory,
+  makeAttemptRecord,
+  type DiagnosticAttemptRecord,
+} from "./lib/history";
 import InlineMarkdown from "./components/InlineMarkdown";
 
 const levelLabels: Record<DiagnosticLevel, string> = {
@@ -50,6 +62,16 @@ const phaseCopy: Record<
     eyebrow: "Primera pasada · Mapa general",
     title: "Construyamos tu mapa de fundamentos.",
     short: "Mapa esencial",
+  },
+  confirmation: {
+    eyebrow: "Comprobación adaptativa",
+    title: "Verifiquemos una señal antes de decidir.",
+    short: "Comprobación",
+  },
+  "route-select": {
+    eyebrow: "Diseña tu recorrido",
+    title: "Elige cuánto quieres explorar hoy.",
+    short: "Ruta",
   },
   interest: {
     eyebrow: "Pausa de interés",
@@ -91,6 +113,7 @@ const confidenceLabels: Record<AnswerConfidence, { label: string; hint: string }
 
 type Theme = "light" | "dark";
 const THEME_STORAGE_KEY = "brujula-tic:theme";
+type ViewTab = "journey" | "results";
 
 const allAreaIds = diagnosticAreas.map((area) => area.id);
 const areaNames = Object.fromEntries(
@@ -107,14 +130,16 @@ function formatTime(totalSeconds: number) {
     : `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
-function questionsForLevel(
-  level: DiagnosticLevel,
-  selectedAreaIds = allAreaIds,
-) {
-  const selected = new Set(selectedAreaIds);
-  return diagnosticQuestions.filter(
-    (question) => question.level === level && selected.has(question.areaId),
-  );
+function stableOptionOrder(question: DiagnosticQuestion, seed: string): DiagnosticOptionKey[] {
+  let hash = 0;
+  for (const character of seed) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  return [...question.options]
+    .sort((left, right) => {
+      const leftHash = (hash ^ left.key.charCodeAt(0)) >>> 0;
+      const rightHash = (hash ^ right.key.charCodeAt(0)) >>> 0;
+      return leftHash - rightHash || left.key.localeCompare(right.key);
+    })
+    .map((option) => option.key);
 }
 
 function toScoringResponses(session: DiagnosticSessionState): ScoringResponse[] {
@@ -123,9 +148,14 @@ function toScoringResponses(session: DiagnosticSessionState): ScoringResponse[] 
     if (!question) return [];
     return [
       {
+        questionId: response.questionId,
         areaId: question.areaId,
         level: question.level,
         isCorrect: response.correct,
+        awardedPoints: response.awardedPoints,
+        maxPoints: response.maxPoints,
+        itemType: response.itemType,
+        subcompetencyId: question.subcompetencyId,
         confidence:
           response.confidence === "unsure" ? "doubtful" : response.confidence,
         activeSeconds: response.activeSeconds,
@@ -152,9 +182,12 @@ function getInterestAverage(session: DiagnosticSessionState, areaId: string) {
 function findPendingInterestArea(session: DiagnosticSessionState) {
   return diagnosticAreas.find((area) => {
     if (session.interests[area.id]) return false;
-    const essentialIds = area.questions
-      .filter((question) => question.level === "essential")
-      .map((question) => question.id);
+    const essentialIds = session.routePlan.length
+      ? session.routePlan
+          .filter((entry) => entry.areaId === area.id && entry.phase === "essential" && !entry.isConfirmation)
+          .map((entry) => entry.questionId)
+      : area.questions.filter((question) => question.level === "essential").slice(0, 4).map((question) => question.id);
+    if (essentialIds.length === 0) return false;
     return essentialIds.every((id) => session.responses[id]);
   });
 }
@@ -167,11 +200,26 @@ function nextUnanswered(
 }
 
 function routeLength(session: DiagnosticSessionState) {
-  return (
-    65 +
-    session.selectedAreas.applied.length * 5 +
-    session.selectedAreas.deepening.length * 5
+  if (session.routePlan.length) return session.routePlan.length;
+  return routeBaseCount(
+    session.routeMode,
+    session.selectedAreas.applied.length,
+    session.selectedAreas.deepening.length,
   );
+}
+
+function phaseQuestionsForSession(session: DiagnosticSessionState): DiagnosticQuestion[] {
+  if (session.phase === "confirmation") {
+    return session.confirmationIds.flatMap((id) => (questionsById[id] ? [questionsById[id]] : []));
+  }
+  if (session.phase !== "essential" && session.phase !== "applied" && session.phase !== "deepening") return [];
+  const planned = session.routePlan
+    .filter((entry) => entry.phase === session.phase && !entry.isConfirmation)
+    .map((entry) => questionsById[entry.questionId])
+    .filter((question): question is DiagnosticQuestion => Boolean(question));
+  if (planned.length) return planned;
+  const areaIds = session.phase === "essential" ? allAreaIds : session.phase === "applied" ? session.selectedAreas.applied : session.selectedAreas.deepening;
+  return questionsForStage(session.phase, areaIds, session.routeMode ?? "recommended");
 }
 
 function repairLoadedSession(session: DiagnosticSessionState) {
@@ -184,27 +232,44 @@ function repairLoadedSession(session: DiagnosticSessionState) {
     Object.entries(session.interests).filter(([id]) => knownAreaIds.has(id)),
   );
   const selectedAreas = {
-    applied: session.selectedAreas.applied.filter((id) => knownAreaIds.has(id)).slice(0, 4),
-    deepening: session.selectedAreas.deepening.filter((id) => knownAreaIds.has(id)).slice(0, 2),
+    applied: session.selectedAreas.applied.filter((id) => knownAreaIds.has(id)).slice(0, session.routeMode === "focused" ? 3 : 4),
+    deepening: session.selectedAreas.deepening.filter((id) => knownAreaIds.has(id)).slice(0, session.routeMode === "focused" ? 3 : 2),
   };
+  const routeMode = session.routeMode ?? "recommended";
+  const routePlan = session.routePlan.length
+    ? session.routePlan.filter((entry) => knownQuestionIds.has(entry.questionId))
+    : routeBaseEntries(routeMode, selectedAreas.applied, selectedAreas.deepening);
   let currentQuestionId =
     session.currentQuestionId && knownQuestionIds.has(session.currentQuestionId)
       ? session.currentQuestionId
       : null;
 
-  if (!currentQuestionId && session.phase === "essential") {
-    currentQuestionId = nextUnanswered(questionsForLevel("essential"), responses)?.id ?? null;
+  if (currentQuestionId && responses[currentQuestionId]) {
+    const currentIds = session.phase === "confirmation"
+      ? session.confirmationIds
+      : session.phase === "essential" || session.phase === "applied" || session.phase === "deepening"
+        ? routePlan.filter((entry) => entry.phase === session.phase && !entry.isConfirmation).map((entry) => entry.questionId)
+        : [];
+    const nextPending = nextUnanswered(currentIds.flatMap((id) => (questionsById[id] ? [questionsById[id]] : [])), responses);
+    currentQuestionId = nextPending?.id ?? null;
+  }
+
+  if (!currentQuestionId && (session.phase === "essential" || session.phase === "confirmation")) {
+    const ids = session.phase === "confirmation"
+      ? session.confirmationIds
+      : routePlan.filter((entry) => entry.phase === "essential" && !entry.isConfirmation).map((entry) => entry.questionId);
+    currentQuestionId = nextUnanswered(ids.flatMap((id) => (questionsById[id] ? [questionsById[id]] : [])), responses)?.id ?? null;
   }
   if (!currentQuestionId && session.phase === "applied") {
     currentQuestionId =
-      nextUnanswered(questionsForLevel("applied", selectedAreas.applied), responses)?.id ?? null;
+      nextUnanswered(routePlan.filter((entry) => entry.phase === "applied" && !entry.isConfirmation).flatMap((entry) => (questionsById[entry.questionId] ? [questionsById[entry.questionId]] : [])), responses)?.id ?? null;
   }
   if (!currentQuestionId && session.phase === "deepening") {
     currentQuestionId =
-      nextUnanswered(questionsForLevel("deepening", selectedAreas.deepening), responses)?.id ?? null;
+      nextUnanswered(routePlan.filter((entry) => entry.phase === "deepening" && !entry.isConfirmation).flatMap((entry) => (questionsById[entry.questionId] ? [questionsById[entry.questionId]] : [])), responses)?.id ?? null;
   }
 
-  return { ...session, responses, interests, selectedAreas, currentQuestionId };
+  return { ...session, routeMode, routePlan, responses, interests, selectedAreas, currentQuestionId };
 }
 
 function ProgressRail({ session }: { session: DiagnosticSessionState }) {
@@ -231,15 +296,16 @@ function ProgressRail({ session }: { session: DiagnosticSessionState }) {
 
       <ol className="area-list">
         {diagnosticAreas.map((area) => {
-          const essential = area.questions.filter(
-            (question) =>
-              question.level === "essential" && session.responses[question.id],
+          const planned = session.routePlan.filter((entry) => entry.areaId === area.id && !entry.isConfirmation);
+          const essential = planned.filter(
+            (entry) => entry.phase === "essential" && session.responses[entry.questionId],
           ).length;
-          const extra = area.questions.filter(
-            (question) =>
-              question.level !== "essential" && session.responses[question.id],
+          const extra = planned.filter(
+            (entry) => entry.phase !== "essential" && session.responses[entry.questionId],
           ).length;
-          const completed = essential === 5 && Boolean(session.interests[area.id]);
+          const plannedEssential = planned.filter((entry) => entry.phase === "essential").length || 0;
+          const plannedTotal = planned.length;
+          const completed = plannedEssential > 0 && essential === plannedEssential && Boolean(session.interests[area.id]);
           return (
             <li
               className={`${activeAreaId === area.id ? "active" : ""} ${completed ? "complete" : ""}`}
@@ -248,7 +314,7 @@ function ProgressRail({ session }: { session: DiagnosticSessionState }) {
               <span>{String(area.number).padStart(2, "0")}</span>
               <div>
                 <p>{area.name}</p>
-                <small>{extra > 0 ? `${essential + extra}/15` : `${essential}/5 esenciales`}</small>
+                <small>{plannedTotal === 0 ? "Fuera de esta ruta" : extra > 0 ? `${essential + extra}/${plannedTotal}` : `${essential}/${plannedEssential} esenciales`}</small>
               </div>
               <i aria-hidden="true">{completed ? "✓" : ""}</i>
             </li>
@@ -262,12 +328,16 @@ function ProgressRail({ session }: { session: DiagnosticSessionState }) {
 function SessionHeader({
   session,
   onTogglePause,
+  viewTab,
 }: {
   session: DiagnosticSessionState;
   onTogglePause: () => void;
+  viewTab?: ViewTab;
 }) {
-  const copy = session.profileName
-    ? phaseCopy[session.phase]
+  const copy = viewTab === "results"
+    ? phaseCopy.results
+    : session.profileName
+      ? phaseCopy[session.phase]
     : {
         eyebrow: "Perfil local",
         title: "Personaliza tu recorrido diagnóstico.",
@@ -372,9 +442,9 @@ function JourneyCard({ phase }: { phase: DiagnosticPhase }) {
       </p>
       <ol className="journey-steps">
         {[
-          ["Mapa esencial", "65 preguntas · todas las áreas"],
-          ["Aplicación", "Hasta cuatro áreas"],
-          ["Profundización", "Hasta dos candidatas"],
+          ["Mapa esencial", "52 o 104 preguntas base"],
+          ["Aplicación", "Hasta cuatro áreas · 4 u 8 por área"],
+          ["Profundización", "Hasta dos candidatas · 4 u 8 por área"],
         ].map(([title, detail], index) => (
           <li className={position === index + 1 ? "current" : position > index + 1 ? "done" : ""} key={title}>
             <span>{position > index + 1 ? "✓" : `0${index + 1}`}</span>
@@ -397,26 +467,67 @@ function JourneyCard({ phase }: { phase: DiagnosticPhase }) {
   );
 }
 
+function ViewTabs({
+  activeTab,
+  answered,
+  onChange,
+}: {
+  activeTab: ViewTab;
+  answered: number;
+  onChange: (tab: ViewTab) => void;
+}) {
+  return (
+    <div className="view-tabs" role="tablist" aria-label="Vistas del diagnóstico">
+      <button
+        className={`view-tab ${activeTab === "journey" ? "active" : ""}`}
+        id="journey-tab"
+        role="tab"
+        aria-controls="journey-panel"
+        aria-selected={activeTab === "journey"}
+        type="button"
+        onClick={() => onChange("journey")}
+      >
+        <span className="view-tab-icon" aria-hidden="true">↗</span>
+        <span>Recorrido</span>
+        <small>Responder y avanzar</small>
+      </button>
+      <button
+        className={`view-tab ${activeTab === "results" ? "active" : ""}`}
+        id="results-tab"
+        role="tab"
+        aria-controls="results-panel"
+        aria-selected={activeTab === "results"}
+        type="button"
+        onClick={() => onChange("results")}
+      >
+        <span className="view-tab-icon" aria-hidden="true">◒</span>
+        <span>Resultados</span>
+        <small>{answered > 0 ? `${answered} respuestas disponibles` : "Vista parcial disponible"}</small>
+      </button>
+    </div>
+  );
+}
+
 function IntroScreen({ onStart }: { onStart: () => void }) {
   return (
     <div className="intro-layout">
       <section className="intro-card">
-        <span className="intro-kicker">13 áreas · 3 niveles · 195 preguntas disponibles</span>
+        <span className="intro-kicker">13 áreas · 3 niveles · 312 preguntas en el banco v2</span>
         <h2>No necesitas responderlo todo para obtener un perfil útil.</h2>
         <p className="intro-lead">
-          Comenzarás con cinco fundamentos de cada área. Tus respuestas, tu confianza y lo
-          que te interese decidirán qué módulos conviene explorar después.
+          Primero elegirás una ruta. Tus respuestas, tu confianza y lo que te interese decidirán
+          qué módulos conviene explorar después, sin convertir el tiempo en una penalización.
         </p>
         <div className="route-overview">
           <article>
             <span>01</span>
             <strong>Mapa general</strong>
-            <p>65 preguntas esenciales y una breve valoración de interés por área.</p>
+            <p>52 preguntas esenciales y una breve valoración de interés por área.</p>
           </article>
           <article>
             <span>02</span>
             <strong>Aplicación</strong>
-            <p>La app propone cuatro áreas; tú conservas la decisión final.</p>
+            <p>La app propone hasta cuatro áreas; tú conservas la decisión final.</p>
           </article>
           <article>
             <span>03</span>
@@ -493,6 +604,127 @@ function ProfileScreen({
   );
 }
 
+function RouteModeScreen({
+  selectedMode,
+  focusedAreas,
+  onSelectMode,
+  onToggleFocusedArea,
+  onStart,
+}: {
+  selectedMode: Exclude<DiagnosticSessionState["routeMode"], null>;
+  focusedAreas: string[];
+  onSelectMode: (mode: Exclude<DiagnosticSessionState["routeMode"], null>) => void;
+  onToggleFocusedArea: (areaId: string) => void;
+  onStart: () => void;
+}) {
+  const routeCards: Array<{
+    mode: Exclude<DiagnosticSessionState["routeMode"], null>;
+    label: string;
+    title: string;
+    detail: string;
+    count: string;
+  }> = [
+    {
+      mode: "panorama",
+      label: "Ruta 1 · Panorámica",
+      title: "Conocer todas las áreas",
+      detail: "Una señal esencial por área para construir una vista amplia.",
+      count: "52 preguntas",
+    },
+    {
+      mode: "recommended",
+      label: "Ruta 2 · Recomendada",
+      title: "Mapa + evidencia adaptativa",
+      detail: "Fundamentos de todas las áreas y profundización guiada por tus respuestas.",
+      count: "76–114 preguntas",
+    },
+    {
+      mode: "deep",
+      label: "Ruta 3 · Profunda",
+      title: "Explorar con más detalle",
+      detail: "Ocho preguntas por nivel y área seleccionada para un diagnóstico más estable.",
+      count: "152 preguntas base",
+    },
+    {
+      mode: "focused",
+      label: "Enfoque manual",
+      title: "Ir directo a mis áreas",
+      detail: "Selecciona de una a tres áreas y responde sus tres niveles.",
+      count: "24 por área",
+    },
+  ];
+
+  return (
+    <div className="route-select-layout">
+      <section className="route-select-card">
+        <span className="intro-kicker">Banco v2 · 13 áreas · 24 preguntas por área</span>
+        <h2>Elige una ruta que puedas responder con atención.</h2>
+        <p className="intro-lead">
+          Las rutas no son notas distintas: cambian la cantidad de evidencia y el tiempo que invertirás.
+          El contador es contextual y nunca modifica tu puntaje.
+        </p>
+        <div className="route-mode-grid">
+          {routeCards.map((card) => (
+            <button
+              className={`route-mode-card ${selectedMode === card.mode ? "selected" : ""}`}
+              type="button"
+              key={card.mode}
+              aria-pressed={selectedMode === card.mode}
+              onClick={() => onSelectMode(card.mode)}
+            >
+              <span className="route-mode-label">{card.label}</span>
+              <strong>{card.title}</strong>
+              <p>{card.detail}</p>
+              <small>{card.count}</small>
+            </button>
+          ))}
+        </div>
+        {selectedMode === "focused" && (
+          <div className="focused-area-picker">
+            <div>
+              <span className="eyebrow">Áreas para el enfoque</span>
+              <p>Selecciona entre 1 y 3 áreas. Podrás cambiar la selección al comenzar una nueva sesión.</p>
+            </div>
+            <div className="focus-area-grid">
+              {diagnosticAreas.map((area) => {
+                const selected = focusedAreas.includes(area.id);
+                return (
+                  <button
+                    type="button"
+                    className={`focus-area-chip ${selected ? "selected" : ""}`}
+                    key={area.id}
+                    aria-pressed={selected}
+                    onClick={() => onToggleFocusedArea(area.id)}
+                  >
+                    <span>{String(area.number).padStart(2, "0")}</span>{area.name}
+                  </button>
+                );
+              })}
+            </div>
+            <small>{focusedAreas.length} de 3 áreas seleccionadas</small>
+          </div>
+        )}
+        <footer className="route-select-actions">
+          <p>{selectedMode === "focused" && focusedAreas.length === 0 ? "Selecciona al menos un área para continuar." : "Puedes pausar y retomar la sesión en cualquier momento."}</p>
+          <button className="button-primary button-large" type="button" disabled={selectedMode === "focused" && focusedAreas.length === 0} onClick={onStart}>
+            Comenzar esta ruta <span aria-hidden="true">→</span>
+          </button>
+        </footer>
+      </section>
+      <aside className="principles-card route-principles-card">
+        <span className="eyebrow">Cómo leer las rutas</span>
+        <h3>Más preguntas no significa una nota “más verdadera”.</h3>
+        <ul>
+          <li><span>01</span><p><strong>Panorámica</strong>Sirve para descubrir dónde vale la pena mirar.</p></li>
+          <li><span>02</span><p><strong>Recomendada</strong>Añade comprobaciones cuando una señal queda ambigua.</p></li>
+          <li><span>03</span><p><strong>Profunda</strong>Reduce el azar con más evidencia por nivel.</p></li>
+          <li><span>04</span><p><strong>Enfoque</strong>Útil si ya tienes una hipótesis de especialización.</p></li>
+        </ul>
+      </aside>
+    </div>
+  );
+}
+
 function QuestionScreen({
   question,
   questionSeconds,
@@ -501,6 +733,8 @@ function QuestionScreen({
   confidence,
   paused,
   phaseQuestions,
+  optionOrder,
+  isConfirmation,
   onSelectOption,
   onSelectConfidence,
 }: {
@@ -511,19 +745,24 @@ function QuestionScreen({
   confidence: AnswerConfidence | null;
   paused: boolean;
   phaseQuestions: DiagnosticQuestion[];
+  optionOrder?: DiagnosticOptionKey[];
+  isConfirmation?: boolean;
   onSelectOption: (option: DiagnosticOptionKey) => void;
   onSelectConfidence: (confidence: AnswerConfidence) => void;
 }) {
   const index = phaseQuestions.findIndex((item) => item.id === question.id);
   const areaIndex =
     phaseQuestions.filter((item) => item.areaId === question.areaId).findIndex((item) => item.id === question.id) + 1;
+  const orderedOptions = optionOrder?.length
+    ? optionOrder.flatMap((key) => question.options.find((option) => option.key === key) ?? [])
+    : question.options;
 
   return (
     <div className="content-grid">
       <article className="question-card">
         <div className="question-meta">
           <div>
-            <span className="level-pill">{levelLabels[question.level]}</span>
+            <span className="level-pill">{isConfirmation ? "Comprobación · " : ""}{levelLabels[question.level]}</span>
             <span className="question-id">{question.id}</span>
           </div>
           <div className="question-time">
@@ -540,13 +779,13 @@ function QuestionScreen({
 
         <div className="question-position">
           <p className="area-name">{question.areaNumber}. {question.areaName}</p>
-          <span>Pregunta {areaIndex} de 5 · {index + 1} de {phaseQuestions.length} en esta pasada</span>
+          <span>Pregunta {areaIndex} de {phaseQuestions.filter((item) => item.areaId === question.areaId).length} · {index + 1} de {phaseQuestions.length} en esta pasada</span>
         </div>
         <h2><InlineMarkdown text={question.stem} /></h2>
 
         <fieldset className="answers" disabled={paused}>
           <legend className="sr-only">Selecciona una respuesta</legend>
-          {question.options.map((option) => (
+          {orderedOptions.map((option) => (
             <label className={selectedOption === option.key ? "selected" : ""} key={option.key}>
               <input
                 checked={selectedOption === option.key}
@@ -584,11 +823,11 @@ function QuestionScreen({
         </fieldset>
 
         <p className="shortcut-hint" role="note">
-          Atajos: <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> o <kbd>A</kbd>/<kbd>B</kbd>/<kbd>C</kbd> para responder · <kbd>Q</kbd>/<kbd>G</kbd> al azar · <kbd>W</kbd>/<kbd>D</kbd> dudoso · <kbd>E</kbd>/<kbd>S</kbd> seguro · <kbd>P</kbd> pausar/reanudar.
+          Atajos: <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>/<kbd>4</kbd> o <kbd>A</kbd>/<kbd>B</kbd>/<kbd>C</kbd>/<kbd>D</kbd> para responder · <kbd>Q</kbd>/<kbd>G</kbd> al azar · <kbd>W</kbd>/<kbd>D</kbd> dudoso · <kbd>E</kbd>/<kbd>S</kbd> seguro · <kbd>P</kbd> pausar/reanudar.
         </p>
 
         <footer className="card-actions">
-          <p>Al elegir una alternativa y tu nivel de confianza, la respuesta se guarda y avanzas automáticamente. La explicación aparecerá al terminar tu recorrido.</p>
+          <p>Al elegir una alternativa y tu nivel de confianza, la respuesta se guarda y avanzas automáticamente. {question.itemType === "graded-judgment" ? "Este escenario admite crédito parcial según la calidad de la decisión." : "La explicación aparecerá al terminar tu recorrido."}</p>
         </footer>
       </article>
       <JourneyCard phase={question.level === "essential" ? "essential" : question.level === "applied" ? "applied" : "deepening"} />
@@ -637,12 +876,14 @@ function InterestScreen({
   areaName,
   draft,
   completedAreas,
+  totalAreas,
   onChange,
   onSubmit,
 }: {
   areaName: string;
   draft: InterestDraft;
   completedAreas: number;
+  totalAreas: number;
   onChange: (field: keyof InterestDraft, value: InterestScore) => void;
   onSubmit: () => void;
 }) {
@@ -650,7 +891,7 @@ function InterestScreen({
   return (
     <div className="focus-layout">
       <section className="interest-card">
-        <span className="level-pill">Área esencial completada · {completedAreas} de 13</span>
+        <span className="level-pill">Área esencial completada · {completedAreas} de {totalAreas}</span>
         <h2>{areaName}</h2>
         <p>
           Valora tu interés antes de seguir. No buscamos premiar una respuesta: queremos
@@ -736,7 +977,7 @@ function AreaSelectionScreen({
               <div>
                 <p>{area.name}</p>
                 <small>
-                  {kind === "applied" ? "Esencial" : "Aplicado"}: {baseMetric?.correct ?? 0}/5 · Interés {interest?.toFixed(1) ?? "NE"}/5
+                  {kind === "applied" ? "Esencial" : "Aplicado"}: {baseMetric?.scorePercent === null || baseMetric?.scorePercent === undefined ? "NE" : `${Math.round(baseMetric.scorePercent)}%`} · Interés {interest?.toFixed(1) ?? "NE"}/5
                 </small>
                 {suggested && <em>{suggestionReasons[area.id]?.join(" · ") || "Sugerida"}</em>}
               </div>
@@ -754,6 +995,319 @@ function AreaSelectionScreen({
           Continuar con {selected.length} {selected.length === 1 ? "área" : "áreas"} <span aria-hidden="true">→</span>
         </button>
       </footer>
+    </section>
+  );
+}
+
+type ConfidenceKey = AnswerConfidence;
+
+const confidenceChartLabels: Record<ConfidenceKey, string> = {
+  guess: "Al azar",
+  unsure: "Dudoso",
+  sure: "Seguro",
+};
+
+function formatPercent(value: number | null) {
+  return value === null || !Number.isFinite(value) ? "NE" : `${Math.round(value)}%`;
+}
+
+function medianNumber(values: number[]) {
+  if (values.length === 0) return null;
+  const ordered = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(ordered.length / 2);
+  return ordered.length % 2 === 0
+    ? (ordered[middle - 1] + ordered[middle]) / 2
+    : ordered[middle];
+}
+
+function percentile(values: number[], fraction: number) {
+  if (values.length === 0) return null;
+  const ordered = [...values].sort((left, right) => left - right);
+  const index = Math.min(ordered.length - 1, Math.max(0, Math.round((ordered.length - 1) * fraction)));
+  return ordered[index];
+}
+
+function pearsonCorrelation(values: Array<[number, number]>) {
+  if (values.length < 3) return null;
+  const meanX = values.reduce((sum, [x]) => sum + x, 0) / values.length;
+  const meanY = values.reduce((sum, [, y]) => sum + y, 0) / values.length;
+  const numerator = values.reduce((sum, [x, y]) => sum + (x - meanX) * (y - meanY), 0);
+  const denominatorX = Math.sqrt(values.reduce((sum, [x]) => sum + (x - meanX) ** 2, 0));
+  const denominatorY = Math.sqrt(values.reduce((sum, [, y]) => sum + (y - meanY) ** 2, 0));
+  if (!denominatorX || !denominatorY) return null;
+  return numerator / (denominatorX * denominatorY);
+}
+
+function DomainInterestPlot({
+  profiles,
+  selectedAreaId,
+  onSelect,
+}: {
+  profiles: ReturnType<typeof classifyAreaProfiles>;
+  selectedAreaId: string | null;
+  onSelect: (areaId: string) => void;
+}) {
+  const chartProfiles = profiles.filter((profile) => profile.answered > 0);
+  const left = 64;
+  const top = 28;
+  const width = 600;
+  const height = 238;
+  const x = (interest: number) => left + ((interest - 1) / 4) * width;
+  const y = (domain: number) => top + (1 - domain / 100) * height;
+
+  return (
+    <section className="chart-panel scatter-panel">
+      <div className="chart-heading">
+        <div>
+          <span className="eyebrow">Gráfico 01 · Perfil</span>
+          <h3>Dominio e interés por área</h3>
+        </div>
+        <p>La esquina superior derecha reúne las candidatas más equilibradas. Selecciona un punto para ver el detalle; el dominio usa puntaje ponderado.</p>
+      </div>
+      {chartProfiles.length === 0 ? (
+        <div className="chart-empty">Completa al menos una respuesta para comenzar a formar este mapa.</div>
+      ) : (
+        <>
+          <div className="scatter-wrap">
+            <svg
+              className="scatter-chart"
+              role="img"
+              aria-labelledby="scatter-title scatter-description"
+              viewBox="0 0 700 320"
+            >
+              <title id="scatter-title">Dominio e interés por área</title>
+              <desc id="scatter-description">Cada punto representa un área respondida. El eje horizontal muestra interés de uno a cinco y el eje vertical el porcentaje de puntaje ponderado.</desc>
+              <rect className="chart-frame" data-chart-frame="true" x={left} y={top} width={width} height={height} rx="2" />
+              {[0, 25, 50, 75, 100].map((tick) => (
+                <g key={tick}>
+                  <line className="chart-grid-line" x1={left} x2={left + width} y1={y(tick)} y2={y(tick)} />
+                  <text className="chart-tick" x={left - 11} y={y(tick) + 4} textAnchor="end">{tick}%</text>
+                </g>
+              ))}
+              {[1, 2, 3, 4, 5].map((tick) => (
+                <text className="chart-tick" key={tick} x={x(tick)} y={top + height + 22} textAnchor="middle">{tick}</text>
+              ))}
+              <line className="chart-threshold" x1={x(4)} x2={x(4)} y1={top} y2={top + height} />
+              <line className="chart-threshold" x1={left} x2={left + width} y1={y(60)} y2={y(60)} />
+              <text className="chart-axis-title" data-axis="x" x={left + width / 2} y={top + height + 45} textAnchor="middle">Interés promedio (1–5)</text>
+              <text className="chart-axis-title" data-axis="y" transform={`translate(16 ${top + height / 2}) rotate(-90)`} textAnchor="middle">Dominio (% puntaje)</text>
+              {chartProfiles.map((profile) => {
+                const selected = profile.areaId === selectedAreaId;
+                return (
+                  <g key={profile.areaId} className={`plot-point ${selected ? "selected" : ""}`}>
+                    <circle
+                      cx={x(profile.interestAverage)}
+                      cy={y(profile.domainPercent)}
+                      r={selected ? 9 : 7}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`${profile.areaName}: ${profile.domainPercent}% de dominio, interés ${profile.interestAverage.toFixed(1)} de 5`}
+                      data-tooltip={`${profile.areaName} · ${profile.domainPercent}% dominio · ${profile.interestAverage.toFixed(1)}/5 interés`}
+                      onClick={() => onSelect(profile.areaId)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onSelect(profile.areaId);
+                        }
+                      }}
+                    >
+                      <title>{profile.areaName}</title>
+                    </circle>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+          <div className="plot-legend" aria-label="Referencias del gráfico">
+            <span><i className="legend-dot" /> Área respondida</span>
+            <span><i className="legend-line" /> Umbral orientativo: 60% dominio / 4 interés</span>
+          </div>
+          {selectedAreaId && (() => {
+            const selected = profiles.find((profile) => profile.areaId === selectedAreaId);
+            if (!selected) return null;
+            return (
+              <div className="plot-detail" aria-live="polite">
+                <strong>{selected.areaName}</strong>
+                <span>Dominio {selected.domainPercent}%</span>
+                <span>Interés {selected.interestAverage.toFixed(1)}/5</span>
+                <span>{quadrantLabel(selected.quadrant)}</span>
+              </div>
+            );
+          })()}
+        </>
+      )}
+    </section>
+  );
+}
+
+function quadrantLabel(quadrant: ReturnType<typeof classifyAreaProfiles>[number]["quadrant"]) {
+  return {
+    "strength-and-interest": "dominio e interés altos",
+    "learning-opportunity": "interés alto, base por reforzar",
+    "strength-for-support": "fortaleza útil como apoyo",
+    "lower-priority": "menor prioridad actual",
+  }[quadrant];
+}
+
+function LevelBarChart({
+  profiles,
+  metrics,
+  selectedAreaId,
+  onSelect,
+}: {
+  profiles: ReturnType<typeof classifyAreaProfiles>;
+  metrics: ReturnType<typeof calculateMetricsByArea>;
+  selectedAreaId: string | null;
+  onSelect: (areaId: string) => void;
+}) {
+  const metricMap = new Map(metrics.map((metric) => [metric.areaId, metric]));
+  const items = profiles
+    .filter((profile) => profile.answered > 0)
+    .sort((left, right) => right.domainPercent - left.domainPercent);
+  return (
+    <section className="chart-panel level-panel">
+      <div className="chart-heading">
+        <div>
+          <span className="eyebrow">Gráfico 02 · Progresión</span>
+          <h3>Desempeño por nivel</h3>
+        </div>
+        <p>Las barras muestran correctas dentro de cada nivel evaluado; una barra ausente significa NE.</p>
+      </div>
+      {items.length === 0 ? <div className="chart-empty">Todavía no hay niveles respondidos.</div> : (
+        <>
+          <div className="level-legend" aria-label="Niveles"><span><i className="level-swatch essential" />Esencial</span><span><i className="level-swatch applied" />Aplicado</span><span><i className="level-swatch deepening" />Profundización</span></div>
+          <div className="level-bars" aria-label="Comparación de desempeño por área">
+            {items.map((profile) => {
+              const metric = metricMap.get(profile.areaId)!;
+              const selected = selectedAreaId === profile.areaId;
+              return (
+                <button className={`level-bar-row ${selected ? "selected" : ""}`} type="button" aria-pressed={selected} key={profile.areaId} onClick={() => onSelect(profile.areaId)}>
+                  <span className="level-bar-label">{profile.areaName}</span>
+                  <span className="level-bar-track" aria-label={`${profile.areaName}: esencial ${formatPercent(metric.byLevel.essential.scorePercent)}, aplicado ${formatPercent(metric.byLevel.applied.scorePercent)}, profundización ${formatPercent(metric.byLevel.deepening.scorePercent)}`}>
+                    <i className="level-segment essential" style={{ width: `${metric.byLevel.essential.scorePercent ?? 0}%` }} />
+                    <i className="level-segment applied" style={{ width: `${metric.byLevel.applied.scorePercent ?? 0}%` }} />
+                    <i className="level-segment deepening" style={{ width: `${metric.byLevel.deepening.scorePercent ?? 0}%` }} />
+                  </span>
+                  <em>{profile.domainPercent}%</em>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ConfidenceChart({
+  session,
+  selectedConfidence,
+  onSelect,
+}: {
+  session: DiagnosticSessionState;
+  selectedConfidence: ConfidenceKey | null;
+  onSelect: (confidence: ConfidenceKey | null) => void;
+}) {
+  const rows = (Object.keys(confidenceChartLabels) as ConfidenceKey[]).map((key) => {
+    const responses = Object.values(session.responses).filter((response) => response.confidence === key);
+    const correct = responses.filter((response) => response.correct).length;
+    const earned = responses.reduce((sum, response) => sum + response.awardedPoints, 0);
+    const possible = responses.reduce((sum, response) => sum + response.maxPoints, 0);
+    const times = responses.map((response) => response.activeSeconds);
+    return {
+      key,
+      count: responses.length,
+      correct,
+      accuracy: responses.length ? (correct / responses.length) * 100 : null,
+      score: possible ? (earned / possible) * 100 : null,
+      earned,
+      possible,
+      medianTime: medianNumber(times),
+    };
+  });
+  const max = Math.max(1, ...rows.map((row) => row.count));
+  const selected = rows.find((row) => row.key === selectedConfidence) ?? null;
+  return (
+    <section className="chart-panel confidence-panel">
+      <div className="chart-heading">
+        <div>
+          <span className="eyebrow">Gráfico 03 · Calibración</span>
+          <h3>Confianza frente a aciertos</h3>
+        </div>
+        <p>Permite detectar si la seguridad que declaras coincide con tus resultados. Haz clic en una fila.</p>
+      </div>
+      <div className="confidence-chart" aria-label="Aciertos según confianza declarada">
+        {rows.map((row) => (
+          <button className={`confidence-chart-row ${selectedConfidence === row.key ? "selected" : ""}`} type="button" aria-pressed={selectedConfidence === row.key} key={row.key} onClick={() => onSelect(selectedConfidence === row.key ? null : row.key)}>
+            <span className="confidence-chart-label">{confidenceChartLabels[row.key]}</span>
+            <span className="confidence-chart-track" style={{ width: `${(row.count / max) * 100}%` }}>
+              <i style={{ width: `${row.score ?? 0}%` }} />
+            </span>
+            <em>{row.count} · {formatPercent(row.score)}</em>
+          </button>
+        ))}
+      </div>
+      <div className="confidence-chart-legend"><span><i className="legend-box correct" />Puntaje ponderado dentro de cada grupo</span><span><i className="legend-box total" />Total de respuestas</span></div>
+      {selected && (
+        <p className="chart-callout" aria-live="polite"><strong>{confidenceChartLabels[selected.key]}:</strong> {selected.correct} de {selected.count} correctas · {selected.earned}/{selected.possible} puntos · mediana de {selected.medianTime === null ? "NE" : formatTime(selected.medianTime)} por respuesta.</p>
+      )}
+    </section>
+  );
+}
+
+function SubcompetencyGrid({
+  session,
+  selectedAreaId,
+  onSelectArea,
+}: {
+  session: DiagnosticSessionState;
+  selectedAreaId: string | null;
+  onSelectArea: (areaId: string) => void;
+}) {
+  const rows = diagnosticAreas.flatMap((area) => {
+    const areaResponses = Object.values(session.responses).filter((response) => questionsById[response.questionId]?.areaId === area.id);
+    const bySubcompetency = new Map<string, { earned: number; possible: number; count: number }>();
+    for (const response of areaResponses) {
+      const question = questionsById[response.questionId];
+      if (!question) continue;
+      const current = bySubcompetency.get(question.subcompetencyId) ?? { earned: 0, possible: 0, count: 0 };
+      current.earned += response.awardedPoints;
+      current.possible += response.maxPoints;
+      current.count += 1;
+      bySubcompetency.set(question.subcompetencyId, current);
+    }
+    return [...bySubcompetency.entries()].map(([subcompetencyId, value]) => ({
+      area,
+      subcompetencyId,
+      ...value,
+      score: value.possible ? (value.earned / value.possible) * 100 : null,
+    }));
+  }).filter((row) => row.count > 0);
+
+  return (
+    <section className="result-section subcompetency-section">
+      <div className="section-heading compact-heading">
+        <div><span className="eyebrow">Lectura fina</span><h2>Subcompetencias observadas.</h2></div>
+        <p>Cada área se divide en cuatro focos. Un foco con pocos ítems es una pista de revisión, no una conclusión definitiva.</p>
+      </div>
+      {rows.length === 0 ? <p className="empty-state">Aún no hay subcompetencias con respuestas.</p> : (
+        <div className="subcompetency-grid">
+          {rows.map((row) => (
+            <button
+              type="button"
+              className={`subcompetency-card ${selectedAreaId === row.area.id ? "selected" : ""}`}
+              key={`${row.area.id}-${row.subcompetencyId}`}
+              onClick={() => onSelectArea(row.area.id)}
+              aria-pressed={selectedAreaId === row.area.id}
+            >
+              <span>{row.area.name}</span>
+              <strong>{row.subcompetencyId.replaceAll("-", " ")}</strong>
+              <i><em style={{ width: `${row.score ?? 0}%` }} /></i>
+              <small>{formatPercent(row.score)} · {row.count} {row.count === 1 ? "ítem" : "ítems"}</small>
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -781,18 +1335,87 @@ const quadrantCopy = {
   },
 } as const;
 
-function scoreCell(correct: number, total: number) {
-  return total === 0 ? <span className="ne">NE</span> : <strong>{correct}/5</strong>;
+function scoreCell(metric: ReturnType<typeof calculateMetricsByArea>[number]["byLevel"][DiagnosticLevel]) {
+  return metric.total === 0
+    ? <span className="ne">NE</span>
+    : <strong>{metric.earnedPoints}/{metric.possiblePoints}</strong>;
+}
+
+function DerivedStats({
+  session,
+  profiles,
+  overall,
+}: {
+  session: DiagnosticSessionState;
+  profiles: ReturnType<typeof classifyAreaProfiles>;
+  overall: ReturnType<typeof calculateOverallMetrics>;
+}) {
+  const expected = routeLength(session);
+  const answered = Object.keys(session.responses).length;
+  const times = Object.values(session.responses).map((response) => response.activeSeconds);
+  const q1 = percentile(times, 0.25);
+  const q3 = percentile(times, 0.75);
+  const confidenceRows = (Object.keys(confidenceChartLabels) as ConfidenceKey[]).map((key) => {
+    const responses = Object.values(session.responses).filter((response) => response.confidence === key);
+    return {
+      key,
+      accuracy: responses.length ? (responses.filter((response) => response.correct).length / responses.length) * 100 : null,
+      score: responses.length
+        ? (responses.reduce((sum, response) => sum + response.awardedPoints, 0) / responses.reduce((sum, response) => sum + response.maxPoints, 0)) * 100
+        : null,
+    };
+  });
+  const sureAccuracy = confidenceRows.find((row) => row.key === "sure")?.score ?? null;
+  const guessAccuracy = confidenceRows.find((row) => row.key === "guess")?.score ?? null;
+  const paired = profiles
+    .filter((profile) => profile.answered > 0 && profile.interestAverage !== 3)
+    .map((profile) => [profile.interestAverage, profile.domainPercent] as [number, number]);
+  const correlation = pearsonCorrelation(paired);
+  const interestValues = profiles.filter((profile) => profile.answered > 0).map((profile) => profile.interestAverage);
+  const interestLow = interestValues.length ? Math.min(...interestValues) : null;
+  const interestHigh = interestValues.length ? Math.max(...interestValues) : null;
+  const objectiveResponses = Object.values(session.responses).filter((response) => response.itemType === "single-best");
+  const judgmentResponses = Object.values(session.responses).filter((response) => response.itemType !== "single-best");
+  const judgmentScore = judgmentResponses.length
+    ? (judgmentResponses.reduce((sum, response) => sum + response.awardedPoints, 0) / judgmentResponses.reduce((sum, response) => sum + response.maxPoints, 0)) * 100
+    : null;
+  const objectiveScore = objectiveResponses.length
+    ? (objectiveResponses.reduce((sum, response) => sum + response.awardedPoints, 0) / objectiveResponses.reduce((sum, response) => sum + response.maxPoints, 0)) * 100
+    : null;
+
+  return (
+    <section className="derived-section" aria-labelledby="derived-title">
+      <div className="section-heading compact-heading">
+        <div><span className="eyebrow">Estadísticas derivadas</span><h2 id="derived-title">Señales que ayudan a leer el resultado.</h2></div>
+        <p>Son cálculos descriptivos del recorrido realizado, no una nota estandarizada ni una predicción sobre tu futuro desempeño.</p>
+      </div>
+      <div className="derived-grid">
+        <article><span>Cobertura de ruta</span><strong>{expected ? Math.round((answered / expected) * 100) : 0}%</strong><p>{answered} de {expected} preguntas previstas en esta ruta.</p></article>
+        <article><span>Rango central de tiempo</span><strong>{q1 === null || q3 === null ? "NE" : `${formatTime(q1)}–${formatTime(q3)}`}</strong><p>Entre el percentil 25 y 75 por respuesta.</p></article>
+        <article><span>Interés observado</span><strong>{interestLow === null ? "NE" : `${interestLow.toFixed(1)}–${interestHigh?.toFixed(1)}`}</strong><p>Rango de promedios en áreas respondidas.</p></article>
+        <article><span>Seguridad declarada</span><strong>{sureAccuracy === null ? "NE" : formatPercent(sureAccuracy)}</strong><p>{guessAccuracy === null ? "Aún sin grupo al azar." : `Al azar: ${formatPercent(guessAccuracy)}.`}</p></article>
+        <article><span>Tipo de evidencia</span><strong>{objectiveScore === null ? "NE" : formatPercent(objectiveScore)}</strong><p>Objetiva: {objectiveResponses.length} · juicio aplicado: {judgmentScore === null ? "NE" : formatPercent(judgmentScore)} ({judgmentResponses.length}).</p></article>
+        <article><span>Asociación exploratoria</span><strong>{correlation === null ? "NE" : `${correlation > 0 ? "+" : ""}${correlation.toFixed(2)}`}</strong><p>{correlation === null ? "Necesita al menos tres áreas con interés distinto." : "Relación lineal entre interés y dominio; no implica causalidad."}</p></article>
+        <article><span>Tiempo total activo</span><strong>{formatTime(session.activeSecondsTotal)}</strong><p>Promedio por respuesta: {overall.averageActiveSeconds === null ? "NE" : formatTime(overall.averageActiveSeconds)}.</p></article>
+      </div>
+    </section>
+  );
 }
 
 function ResultsScreen({
   session,
+  history,
   onDownload,
   onReset,
+  onContinue,
+  partial,
 }: {
   session: DiagnosticSessionState;
+  history: DiagnosticAttemptRecord[];
   onDownload: () => void;
   onReset: () => void;
+  onContinue: () => void;
+  partial: boolean;
 }) {
   const responses = toScoringResponses(session);
   const interests = toScoringInterests(session);
@@ -801,38 +1424,80 @@ function ResultsScreen({
   const overall = calculateOverallMetrics(responses);
   const profiles = classifyAreaProfiles(allAreaIds, responses, interests, areaNames);
   const recommendations = buildRecommendations(profiles, 3);
+  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(
+    recommendations.projectCandidates[0]?.areaId ?? profiles.find((profile) => profile.answered > 0)?.areaId ?? null,
+  );
+  const [selectedConfidence, setSelectedConfidence] = useState<ConfidenceKey | null>(null);
   const wrongAnswers = Object.values(session.responses)
-    .filter((response) => !response.correct)
+    .filter((response) => response.awardedPoints < response.maxPoints)
     .sort((a, b) => Number(b.confidence === "sure") - Number(a.confidence === "sure"));
 
   return (
     <div className="results-stack">
       <section className="results-hero">
         <div>
-          <span className="level-pill">{responses.length} respuestas analizadas</span>
-          <h2>{recommendations.projectCandidates[0]?.areaName ?? "Tu perfil TIC"}</h2>
+          <span className="level-pill">{partial ? "Vista parcial · " : "Ruta completada · "}{responses.length} respuestas analizadas</span>
+          <h2>{partial ? "Tu perfil mientras avanzas" : recommendations.projectCandidates[0]?.areaName ?? "Tu perfil TIC"}</h2>
           <p>
-            {recommendations.projectCandidates[0]?.message ??
-              "Usa estas señales para decidir qué probar con una actividad práctica breve."}
+            {partial
+              ? "Puedes revisar estas señales ahora y volver al recorrido cuando quieras. Los resultados se actualizan después de cada respuesta."
+              : recommendations.projectCandidates[0]?.message ?? "Usa estas señales para decidir qué probar con una actividad práctica breve."}
           </p>
         </div>
         <div className="result-actions">
+          {partial && <button className="button-primary" type="button" onClick={onContinue}>Volver al recorrido</button>}
           <button className="button-primary" type="button" onClick={onDownload}>Descargar resultados</button>
           <button className="button-secondary" type="button" onClick={() => window.print()}>Imprimir</button>
         </div>
       </section>
 
       <section className="signal-grid" aria-label="Resumen del diagnóstico">
-        <article><span>Respuestas correctas</span><strong>{overall.correct}<small>/{overall.total}</small></strong><p>{overall.accuracyPercent}% en el recorrido realizado</p></article>
+        <article><span>Respuestas correctas</span><strong>{overall.correct}<small>/{overall.total}</small></strong><p>{formatPercent(overall.accuracyPercent)} en el recorrido realizado</p></article>
+        <article><span>Puntaje ponderado</span><strong>{formatPercent(overall.scorePercent)}</strong><p>{overall.earnedPoints} de {overall.possiblePoints} puntos; incluye crédito parcial.</p></article>
         <article><span>Errores seguros</span><strong>{overall.highConfidenceWrong}</strong><p>Prioridad de revisión conceptual</p></article>
         <article><span>Tiempo activo</span><strong>{formatTime(session.activeSecondsTotal)}</strong><p>Mediana por pregunta: {formatTime(overall.medianActiveSeconds ?? 0)}</p></article>
         <article><span>Áreas profundizadas</span><strong>{session.selectedAreas.deepening.length}</strong><p>De 13 áreas disponibles</p></article>
       </section>
 
+      {history.length > 0 && (
+        <section className="result-section history-section">
+          <div className="section-heading compact-heading">
+            <div><span className="eyebrow">Historial local</span><h2>Compara tus intentos anteriores.</h2></div>
+            <p>Se guardan solo en este navegador para observar cambios; no son percentiles ni una certificación.</p>
+          </div>
+          <div className="history-list">
+            {history.slice(0, 6).map((attempt) => {
+              const attemptResponses = Object.values(attempt.responses);
+              const earned = attemptResponses.reduce((sum, response) => sum + response.awardedPoints, 0);
+              const possible = attemptResponses.reduce((sum, response) => sum + response.maxPoints, 0);
+              return (
+                <article className={`history-card ${attempt.id === session.sessionId ? "current" : ""}`} key={attempt.id}>
+                  <div><strong>{attempt.id === session.sessionId ? "Intento actual" : "Intento guardado"}</strong><small>{new Date(attempt.completedAt).toLocaleString("es-CL")}</small></div>
+                  <span>{attempt.routeMode ?? "ruta legacy"}</span>
+                  <em>{earned}/{possible} puntos · {attempt.responseCount} respuestas</em>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      <DerivedStats session={session} profiles={profiles} overall={overall} />
+
+      <section className="charts-section" aria-label="Gráficos interactivos de resultados">
+        <DomainInterestPlot profiles={profiles} selectedAreaId={selectedAreaId} onSelect={setSelectedAreaId} />
+        <div className="chart-split">
+          <LevelBarChart profiles={profiles} metrics={metrics} selectedAreaId={selectedAreaId} onSelect={setSelectedAreaId} />
+          <ConfidenceChart session={session} selectedConfidence={selectedConfidence} onSelect={setSelectedConfidence} />
+        </div>
+      </section>
+
+      <SubcompetencyGrid session={session} selectedAreaId={selectedAreaId} onSelectArea={setSelectedAreaId} />
+
       <section className="result-section">
         <div className="section-heading">
           <div><span className="eyebrow">Lectura conjunta</span><h2>Dominio e interés cuentan historias distintas.</h2></div>
-          <p>Los umbrales son orientativos: 60% de dominio y 4/5 de interés. Cinco preguntas por nivel no constituyen una medición exhaustiva.</p>
+          <p>Los umbrales son orientativos: 60% de dominio y 4/5 de interés. La cantidad de preguntas depende de la ruta y no constituye una certificación.</p>
         </div>
         <div className="quadrant-grid">
           {(Object.keys(quadrantCopy) as Array<keyof typeof quadrantCopy>).map((quadrant) => {
@@ -871,9 +1536,9 @@ function ResultsScreen({
                 return (
                   <tr key={area.id}>
                     <th><span>{String(area.number).padStart(2, "0")}</span>{area.name}</th>
-                    <td>{scoreCell(metric.byLevel.essential.correct, metric.byLevel.essential.total)}</td>
-                    <td>{scoreCell(metric.byLevel.applied.correct, metric.byLevel.applied.total)}</td>
-                    <td>{scoreCell(metric.byLevel.deepening.correct, metric.byLevel.deepening.total)}</td>
+                    <td>{scoreCell(metric.byLevel.essential)}</td>
+                    <td>{scoreCell(metric.byLevel.applied)}</td>
+                    <td>{scoreCell(metric.byLevel.deepening)}</td>
                     <td>{interest ? `${interest.toFixed(1)}/5` : <span className="ne">NE</span>}</td>
                     <td className={metric.overall.highConfidenceWrong > 0 ? "attention" : ""}>{metric.overall.highConfidenceWrong}</td>
                     <td>{metric.overall.medianActiveSeconds === null ? <span className="ne">NE</span> : formatTime(metric.overall.medianActiveSeconds)}</td>
@@ -894,6 +1559,7 @@ function ResultsScreen({
           {wrongAnswers.length === 0 && <p className="empty-state">No hubo respuestas incorrectas en el recorrido realizado.</p>}
           {wrongAnswers.map((response) => {
             const question = questionsById[response.questionId];
+            if (!question) return null;
             const selectedText = question.options.find((option) => option.key === response.selectedOption)?.text;
             return (
               <details className={response.confidence === "sure" ? "priority" : ""} key={response.questionId}>
@@ -904,7 +1570,7 @@ function ResultsScreen({
                 </summary>
                 <div>
                   <h3><InlineMarkdown text={question.stem} /></h3>
-                  <p><strong>Elegiste {response.selectedOption}:</strong> <InlineMarkdown text={selectedText ?? ""} /></p>
+                  <p><strong>Elegiste {response.selectedOption} ({response.awardedPoints}/{response.maxPoints} puntos):</strong> <InlineMarkdown text={selectedText ?? ""} /></p>
                   <p className="correct-answer"><strong>Respuesta correcta {question.correctOption}:</strong> <InlineMarkdown text={question.options.find((option) => option.key === question.correctOption)?.text ?? ""} /></p>
                   <p><strong>Por qué:</strong> <InlineMarkdown text={question.explanation} /></p>
                   <small>Evalúa: <InlineMarkdown text={question.evaluates} /></small>
@@ -944,11 +1610,16 @@ export default function Home() {
   const [interestDraft, setInterestDraft] = useState<InterestDraft>({ enjoyed: null, learnMore: null, projectInterest: null });
   const [appliedDraft, setAppliedDraft] = useState<string[]>([]);
   const [deepeningDraft, setDeepeningDraft] = useState<string[]>([]);
+  const [focusedDraft, setFocusedDraft] = useState<string[]>([]);
+  const [routeModeDraft, setRouteModeDraft] = useState<Exclude<DiagnosticSessionState["routeMode"], null>>("recommended");
+  const [attemptHistory, setAttemptHistory] = useState<DiagnosticAttemptRecord[]>([]);
   const [profileNameDraft, setProfileNameDraft] = useState("");
   const [theme, setTheme] = useState<Theme>("light");
+  const [activeTab, setActiveTab] = useState<ViewTab>("journey");
   const themeLoadedRef = useRef(false);
   const startedAtRef = useRef(new Date().toISOString());
   const answerLockRef = useRef(false);
+  const savedAttemptRef = useRef<string | null>(null);
   const answerSubmitRef = useRef<
     (option: DiagnosticOptionKey, answerConfidence: AnswerConfidence) => void
   >(() => undefined);
@@ -958,7 +1629,11 @@ export default function Home() {
     const repaired = repairLoadedSession(stored ?? createInitialSession());
     const timeout = window.setTimeout(() => {
       setSession(repaired);
+      setAttemptHistory(loadAttemptHistory(window.localStorage));
       setProfileNameDraft(repaired.profileName);
+      setRouteModeDraft(repaired.routeMode ?? "recommended");
+      setFocusedDraft(repaired.routeMode === "focused" ? repaired.selectedAreas.applied : []);
+      if (repaired.phase === "results") setActiveTab("results");
       const restoredResponses = toScoringResponses(repaired);
       const restoredInterests = toScoringInterests(repaired);
       if (repaired.phase === "select-applied") {
@@ -985,6 +1660,14 @@ export default function Home() {
     }, 0);
     return () => window.clearTimeout(timeout);
   }, []);
+
+  useEffect(() => {
+    if (!session || session.phase !== "results" || savedAttemptRef.current === session.sessionId) return;
+    const attempt = makeAttemptRecord(session);
+    const nextHistory = appendAttemptHistory(window.localStorage, attempt);
+    savedAttemptRef.current = session.sessionId;
+    setAttemptHistory(nextHistory);
+  }, [session]);
 
   useEffect(() => {
     if (session) saveSession(window.localStorage, session);
@@ -1015,7 +1698,7 @@ export default function Home() {
   const isPaused = session?.paused;
 
   useEffect(() => {
-    if (!currentPhase || currentPhase === "intro" || currentPhase === "results" || isPaused) return;
+    if (!currentPhase || ["intro", "route-select", "results"].includes(currentPhase) || isPaused) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       setSession((previous) => previous ? { ...previous, activeSecondsTotal: previous.activeSecondsTotal + 1, updatedAt: new Date().toISOString() } : previous);
@@ -1043,57 +1726,129 @@ export default function Home() {
     startedAtRef.current = new Date().toISOString();
   };
 
+  const areaIdsForLevel = (state: DiagnosticSessionState, level: DiagnosticLevel) =>
+    level === "essential"
+      ? (state.routeMode === "focused" ? state.selectedAreas.applied : allAreaIds)
+      : level === "applied" ? state.selectedAreas.applied : state.selectedAreas.deepening;
+
+  const advanceAfterLevel = (
+    state: DiagnosticSessionState,
+    level: DiagnosticLevel,
+    responses: DiagnosticSessionState["responses"],
+    now: string,
+    allowConfirmation = true,
+  ): DiagnosticSessionState => {
+    const mode = state.routeMode ?? "recommended";
+    const areaIds = areaIdsForLevel(state, level);
+    const confirmations = allowConfirmation && mode === "recommended"
+      ? chooseConfirmations(level, areaIds, responses)
+      : [];
+    if (confirmations.length > 0) {
+      const confirmationEntries = confirmations.map((question) => ({
+        questionId: question.id,
+        itemVersion: question.version,
+        phase: level,
+        areaId: question.areaId,
+        reason: "Comprobación de una señal ambigua",
+        isConfirmation: true,
+      }));
+      return {
+        ...state,
+        responses,
+        routePlan: [...state.routePlan, ...confirmationEntries],
+        confirmationIds: confirmations.map((question) => question.id),
+        confirmationLevel: level,
+        confirmationReturnPhase: level,
+        phase: "confirmation",
+        currentQuestionId: confirmations[0]?.id ?? null,
+        updatedAt: now,
+      };
+    }
+
+    if (level === "essential") {
+      if (mode === "panorama") {
+        setActiveTab("results");
+        return { ...state, responses, phase: "results", currentQuestionId: null, updatedAt: now };
+      }
+      if (mode === "focused") {
+        const appliedQuestions = phaseQuestionsForSession({ ...state, responses, phase: "applied" });
+        const first = appliedQuestions[0];
+        return { ...state, responses, phase: "applied", currentQuestionId: first?.id ?? null, updatedAt: now };
+      }
+      setAppliedDraft(
+        suggestAppliedAreas(allAreaIds, toScoringResponses({ ...state, responses }), toScoringInterests(state), 4).map((item) => item.areaId),
+      );
+      return { ...state, responses, phase: "select-applied", currentQuestionId: null, updatedAt: now };
+    }
+    if (level === "applied") {
+      if (mode === "focused") {
+        const first = phaseQuestionsForSession({ ...state, responses, phase: "deepening" })[0];
+        return { ...state, responses, phase: "deepening", currentQuestionId: first?.id ?? null, updatedAt: now };
+      }
+      const available = state.selectedAreas.applied.length ? state.selectedAreas.applied : allAreaIds;
+      setDeepeningDraft(
+        suggestDeepeningAreas(available, toScoringResponses({ ...state, responses }), toScoringInterests(state), 2).map((item) => item.areaId),
+      );
+      return { ...state, responses, phase: "select-deepening", currentQuestionId: null, updatedAt: now };
+    }
+    setActiveTab("results");
+    return { ...state, responses, phase: "results", currentQuestionId: null, updatedAt: now };
+  };
+
   const handleAnswer = (answerOption: DiagnosticOptionKey, answerConfidence: AnswerConfidence) => {
     if (!session || session.paused || !currentQuestion || answerLockRef.current) return;
     answerLockRef.current = true;
     const now = new Date().toISOString();
+    const selected = currentQuestion.options.find((option) => option.key === answerOption);
+    const maxPoints = Math.max(1, currentQuestion.maxPoints || 1);
+    const awardedPoints = Math.min(maxPoints, Math.max(0, selected?.points ?? (answerOption === currentQuestion.correctOption ? maxPoints : 0)));
     const nextResponses = {
       ...session.responses,
       [currentQuestion.id]: {
         questionId: currentQuestion.id,
         selectedOption: answerOption,
-        correct: answerOption === currentQuestion.correctOption,
+        correct: awardedPoints >= maxPoints,
+        awardedPoints,
+        maxPoints,
+        itemVersion: currentQuestion.version,
+        bankVersion: currentQuestion.bankVersion,
+        itemType: currentQuestion.itemType,
+        optionOrder: stableOptionOrder(currentQuestion, `${session.sessionId}:${currentQuestion.id}`),
         confidence: answerConfidence,
         activeSeconds: questionSeconds,
         startedAt: startedAtRef.current,
         answeredAt: now,
       },
     };
-    const phaseQuestions = questionsForLevel(
-      currentQuestion.level,
-      currentQuestion.level === "essential"
-        ? allAreaIds
-        : currentQuestion.level === "applied"
-          ? session.selectedAreas.applied
-          : session.selectedAreas.deepening,
-    );
+    const phaseQuestions = session.phase === "confirmation"
+      ? session.confirmationIds.flatMap((id) => (questionsById[id] ? [questionsById[id]] : []))
+      : phaseQuestionsForSession(session);
     const index = phaseQuestions.findIndex((question) => question.id === currentQuestion.id);
     const next = phaseQuestions[index + 1] ?? null;
-    const completedArea = !next || next.areaId !== currentQuestion.areaId;
-
-    let phase = session.phase;
-    let currentQuestionId: string | null = next?.id ?? null;
-    if (currentQuestion.level === "essential" && completedArea) {
-      phase = "interest";
-      currentQuestionId = null;
-    } else if (!next && currentQuestion.level === "applied") {
-      phase = "select-deepening";
-    } else if (!next && currentQuestion.level === "deepening") {
-      phase = "results";
+    let nextSession: DiagnosticSessionState;
+    if (next) {
+      const completedArea = session.phase === "essential" && next.areaId !== currentQuestion.areaId;
+      if (completedArea) {
+        nextSession = { ...session, responses: nextResponses, phase: "interest", currentQuestionId: null, updatedAt: now };
+      } else {
+        nextSession = { ...session, responses: nextResponses, currentQuestionId: next.id, updatedAt: now };
+      }
+    } else if (session.phase === "essential" && !session.interests[currentQuestion.areaId]) {
+      nextSession = { ...session, responses: nextResponses, phase: "interest", currentQuestionId: null, updatedAt: now };
+    } else if (session.phase === "confirmation") {
+      const returnLevel = session.confirmationReturnPhase ?? currentQuestion.level;
+      const cleared = { ...session, responses: nextResponses, confirmationIds: [], confirmationLevel: null, confirmationReturnPhase: null };
+      nextSession = advanceAfterLevel(cleared, returnLevel, nextResponses, now, false);
+    } else {
+      nextSession = advanceAfterLevel(session, currentQuestion.level, nextResponses, now);
     }
-
-    if (phase === "select-deepening") {
-      const nextSession = { ...session, responses: nextResponses };
-      const suggestions = suggestDeepeningAreas(
-        session.selectedAreas.applied,
-        toScoringResponses(nextSession),
-        toScoringInterests(nextSession),
-        2,
-      );
-      setDeepeningDraft(suggestions.map((item) => item.areaId));
-    }
+    const currentRouteIndex = nextSession.routePlan.findIndex((entry) => entry.questionId === currentQuestion.id);
+    nextSession = {
+      ...nextSession,
+      routeCursor: Math.max(session.routeCursor, currentRouteIndex >= 0 ? currentRouteIndex + 1 : session.routeCursor),
+    };
     prepareQuestion();
-    setSession({ ...session, responses: nextResponses, phase, currentQuestionId, updatedAt: now });
+    setSession(nextSession);
     window.setTimeout(() => {
       answerLockRef.current = false;
     }, 0);
@@ -1106,7 +1861,7 @@ export default function Home() {
   useEffect(() => {
     if (
       !currentPhase ||
-      ["intro", "results"].includes(currentPhase)
+      ["intro", "route-select", "results"].includes(currentPhase)
     ) {
       return;
     }
@@ -1135,6 +1890,7 @@ export default function Home() {
         "1": "A",
         "2": "B",
         "3": "C",
+        "4": "D",
         a: "A",
         b: "B",
         c: "C",
@@ -1151,6 +1907,7 @@ export default function Home() {
       if (optionByKey[key]) {
         event.preventDefault();
         const nextOption = optionByKey[key];
+        if (!currentQuestion?.options.some((option) => option.key === nextOption)) return;
         setSelectedOption(nextOption);
         if (confidence) answerSubmitRef.current(nextOption, confidence);
         return;
@@ -1166,25 +1923,58 @@ export default function Home() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [confidence, currentPhase, isPaused, selectedOption]);
+  }, [confidence, currentPhase, currentQuestion, isPaused, selectedOption]);
 
   if (!session) {
     return <main className="loading-screen"><span className="brand-mark">B</span><p>Preparando tu diagnóstico…</p></main>;
   }
 
-  const setPhase = (phase: DiagnosticPhase, currentQuestionId: string | null = null) => {
-    setSession((previous) => previous ? { ...previous, phase, currentQuestionId, updatedAt: new Date().toISOString() } : previous);
-  };
-
   const handleProfileSubmit = () => {
     const profileName = profileNameDraft.trim();
     if (!profileName) return;
-    setSession({ ...session, profileName, updatedAt: new Date().toISOString() });
+    setSession({ ...session, profileName, phase: "route-select", currentQuestionId: null, updatedAt: new Date().toISOString() });
   };
 
   const handleStart = () => {
+    const mode = routeModeDraft;
+    const focusIds = mode === "focused" ? focusedDraft : [];
+    if (mode === "focused" && focusIds.length === 0) return;
+    const selectedApplied = mode === "focused" ? focusIds : [];
+    const selectedDeepening = mode === "focused" ? focusIds : [];
+    const plan = routeBaseEntries(mode, selectedApplied, selectedDeepening);
+    const first = plan[0] ? questionsById[plan[0].questionId] : null;
+    if (!first) return;
     prepareQuestion();
-    setPhase("essential", questionsForLevel("essential")[0].id);
+    setSession({
+      ...session,
+      routeMode: mode,
+      bankVersion: "v2-draft",
+      routePlan: plan,
+      routeCursor: 0,
+      selectedAreas: { applied: selectedApplied, deepening: selectedDeepening },
+      phase: "essential",
+      currentQuestionId: first.id,
+      responses: {},
+      interests: {},
+      confirmationIds: [],
+      confirmationLevel: null,
+      confirmationReturnPhase: null,
+      activeSecondsTotal: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const handleRouteModeSelect = (mode: Exclude<DiagnosticSessionState["routeMode"], null>) => {
+    setRouteModeDraft(mode);
+    if (mode !== "focused") setFocusedDraft([]);
+  };
+
+  const toggleFocusedArea = (areaId: string) => {
+    setFocusedDraft((current) => {
+      if (current.includes(areaId)) return current.filter((id) => id !== areaId);
+      return current.length < 3 ? [...current, areaId] : current;
+    });
   };
 
   const handleOptionSelect = (option: DiagnosticOptionKey) => {
@@ -1211,23 +2001,16 @@ export default function Home() {
         updatedAt: new Date().toISOString(),
       },
     };
-    const next = nextUnanswered(questionsForLevel("essential"), session.responses);
-    const nextSession: DiagnosticSessionState = {
+    const next = nextUnanswered(phaseQuestionsForSession({ ...session, interests: nextInterests, phase: "essential" }), session.responses);
+    let nextSession: DiagnosticSessionState = {
       ...session,
       interests: nextInterests,
-      phase: next ? "essential" : "select-applied",
+      phase: next ? "essential" : "essential",
       currentQuestionId: next?.id ?? null,
       updatedAt: new Date().toISOString(),
     };
     if (!next) {
-      setAppliedDraft(
-        suggestAppliedAreas(
-          allAreaIds,
-          toScoringResponses(nextSession),
-          toScoringInterests(nextSession),
-          4,
-        ).map((item) => item.areaId),
-      );
+      nextSession = advanceAfterLevel(nextSession, "essential", nextSession.responses, nextSession.updatedAt);
     }
     setInterestDraft({ enjoyed: null, learnMore: null, projectInterest: null });
     prepareQuestion();
@@ -1244,18 +2027,26 @@ export default function Home() {
 
   const confirmApplied = () => {
     const selected = diagnosticAreas.map((area) => area.id).filter((id) => appliedDraft.includes(id));
-    const first = questionsForLevel("applied", selected)[0];
+    const nextSession = { ...session, selectedAreas: { ...session.selectedAreas, applied: selected } };
+    const first = phaseQuestionsForSession({ ...nextSession, phase: "applied" })[0];
     if (!first) return;
     prepareQuestion();
-    setSession({ ...session, selectedAreas: { ...session.selectedAreas, applied: selected }, phase: "applied", currentQuestionId: first.id, updatedAt: new Date().toISOString() });
+    const routePlan = session.routePlan.some((entry) => entry.phase === "applied")
+      ? session.routePlan
+      : [...session.routePlan, ...routeBaseEntries(session.routeMode ?? "recommended", selected, session.selectedAreas.deepening).filter((entry) => entry.phase === "applied")];
+    setSession({ ...nextSession, routePlan, phase: "applied", currentQuestionId: first.id, updatedAt: new Date().toISOString() });
   };
 
   const confirmDeepening = () => {
     const selected = diagnosticAreas.map((area) => area.id).filter((id) => deepeningDraft.includes(id));
-    const first = questionsForLevel("deepening", selected)[0];
+    const nextSession = { ...session, selectedAreas: { ...session.selectedAreas, deepening: selected } };
+    const first = phaseQuestionsForSession({ ...nextSession, phase: "deepening" })[0];
     if (!first) return;
     prepareQuestion();
-    setSession({ ...session, selectedAreas: { ...session.selectedAreas, deepening: selected }, phase: "deepening", currentQuestionId: first.id, updatedAt: new Date().toISOString() });
+    const routePlan = session.routePlan.some((entry) => entry.phase === "deepening")
+      ? session.routePlan
+      : [...session.routePlan, ...routeBaseEntries(session.routeMode ?? "recommended", session.selectedAreas.applied, selected).filter((entry) => entry.phase === "deepening")];
+    setSession({ ...nextSession, routePlan, phase: "deepening", currentQuestionId: first.id, updatedAt: new Date().toISOString() });
   };
 
   const handleDownload = () => {
@@ -1263,6 +2054,9 @@ export default function Home() {
     const metrics = calculateMetricsByArea(scoringResponses, allAreaIds);
     const payload = JSON.stringify({
       format: "brujula-tic-resultados",
+      schemaVersion: 3,
+      bankVersion: session.bankVersion,
+      routeMode: session.routeMode,
       exportedAt: new Date().toISOString(),
       note: "El tiempo es contextual y no modifica el puntaje.",
       session,
@@ -1285,6 +2079,7 @@ export default function Home() {
     setAppliedDraft([]);
     setDeepeningDraft([]);
     setProfileNameDraft("");
+    setActiveTab("journey");
   };
 
   const appliedSuggestionReasons = Object.fromEntries(
@@ -1293,12 +2088,7 @@ export default function Home() {
   const deepeningSuggestionReasons = Object.fromEntries(
     deepeningSuggestions.map((item) => [item.areaId, item.reasons]),
   );
-  const currentPhaseQuestions = currentQuestion
-    ? questionsForLevel(
-        currentQuestion.level,
-        currentQuestion.level === "essential" ? allAreaIds : currentQuestion.level === "applied" ? session.selectedAreas.applied : session.selectedAreas.deepening,
-      )
-    : [];
+  const currentPhaseQuestions = currentQuestion ? phaseQuestionsForSession(session) : [];
   const currentQuestionIndex = currentQuestion
     ? currentPhaseQuestions.findIndex((question) => question.id === currentQuestion.id)
     : -1;
@@ -1312,11 +2102,14 @@ export default function Home() {
         .sort((a, b) => a.answeredAt.localeCompare(b.answeredAt))
         .at(-1)?.activeSeconds ?? null;
 
+  const selectedView: ViewTab = activeTab;
+  const resultsTabVisible = Boolean(session.profileName);
+
   return (
     <main className={`app-shell ${session.phase === "intro" || !session.profileName ? "intro-shell" : ""}`}>
       {session.profileName && session.phase !== "intro" && <ProgressRail session={session} />}
       <section className={`quiz-workspace ${session.phase === "intro" || !session.profileName ? "intro-workspace" : ""}`}>
-        <SessionHeader session={session} onTogglePause={() => setSession({ ...session, paused: !session.paused, updatedAt: new Date().toISOString() })} />
+        <SessionHeader session={session} viewTab={resultsTabVisible ? selectedView : undefined} onTogglePause={() => setSession({ ...session, paused: !session.paused, updatedAt: new Date().toISOString() })} />
 
         {!session.profileName ? (
           <ProfileScreen
@@ -1326,54 +2119,75 @@ export default function Home() {
           />
         ) : (
           <>
-            {session.phase === "intro" && <IntroScreen onStart={handleStart} />}
-            {currentQuestion && ["essential", "applied", "deepening"].includes(session.phase) && (
-              <QuestionScreen
-                question={currentQuestion}
-                questionSeconds={questionSeconds}
-                previousAnswerSeconds={previousAnswerSeconds}
-                selectedOption={selectedOption}
-                confidence={confidence}
-                paused={session.paused}
-                phaseQuestions={currentPhaseQuestions}
-                onSelectOption={handleOptionSelect}
-                onSelectConfidence={handleConfidenceSelect}
-              />
+            {resultsTabVisible && <ViewTabs activeTab={selectedView} answered={Object.keys(session.responses).length} onChange={setActiveTab} />}
+            {selectedView === "results" ? (
+              <div id="results-panel" role="tabpanel" aria-labelledby="results-tab">
+                <ResultsScreen session={session} history={attemptHistory} partial={session.phase !== "results"} onContinue={() => setActiveTab("journey")} onDownload={handleDownload} onReset={handleReset} />
+              </div>
+            ) : (
+              <div id="journey-panel" role="tabpanel" aria-labelledby="journey-tab">
+                {session.phase === "intro" && <IntroScreen onStart={handleStart} />}
+                {session.phase === "route-select" && (
+                  <RouteModeScreen
+                    selectedMode={routeModeDraft}
+                    focusedAreas={focusedDraft}
+                    onSelectMode={handleRouteModeSelect}
+                    onToggleFocusedArea={toggleFocusedArea}
+                    onStart={handleStart}
+                  />
+                )}
+                {currentQuestion && ["essential", "confirmation", "applied", "deepening"].includes(session.phase) && (
+                  <QuestionScreen
+                    question={currentQuestion}
+                    questionSeconds={questionSeconds}
+                    previousAnswerSeconds={previousAnswerSeconds}
+                    selectedOption={selectedOption}
+                    confidence={confidence}
+                    paused={session.paused}
+                    phaseQuestions={currentPhaseQuestions}
+                    optionOrder={stableOptionOrder(currentQuestion, `${session.sessionId}:${currentQuestion.id}`)}
+                    isConfirmation={session.phase === "confirmation"}
+                    onSelectOption={handleOptionSelect}
+                    onSelectConfidence={handleConfidenceSelect}
+                  />
+                )}
+                {session.phase === "interest" && pendingInterest && (
+                  <InterestScreen
+                    areaName={pendingInterest.name}
+                    draft={interestDraft}
+                    completedAreas={Object.keys(session.interests).length + 1}
+                    totalAreas={session.routeMode === "focused" ? session.selectedAreas.applied.length : 13}
+                    onChange={(field, value) => setInterestDraft((current) => ({ ...current, [field]: value }))}
+                    onSubmit={handleInterestSubmit}
+                  />
+                )}
+                {session.phase === "select-applied" && (
+                  <AreaSelectionScreen
+                    kind="applied"
+                    session={session}
+                    selected={appliedDraft}
+                    suggestionIds={appliedSuggestions.map((item) => item.areaId)}
+                    suggestionReasons={appliedSuggestionReasons}
+                    availableAreaIds={allAreaIds}
+                    onToggle={(areaId) => toggleArea("applied", areaId)}
+                    onContinue={confirmApplied}
+                  />
+                )}
+                {session.phase === "select-deepening" && (
+                  <AreaSelectionScreen
+                    kind="deepening"
+                    session={session}
+                    selected={deepeningDraft}
+                    suggestionIds={deepeningSuggestions.map((item) => item.areaId)}
+                    suggestionReasons={deepeningSuggestionReasons}
+                    availableAreaIds={deepeningAvailable}
+                    onToggle={(areaId) => toggleArea("deepening", areaId)}
+                    onContinue={confirmDeepening}
+                  />
+                )}
+                {session.phase === "results" && <p className="completion-note">El recorrido está completo. Abre la pestaña Resultados para revisar tu perfil.</p>}
+              </div>
             )}
-            {session.phase === "interest" && pendingInterest && (
-              <InterestScreen
-                areaName={pendingInterest.name}
-                draft={interestDraft}
-                completedAreas={Object.keys(session.interests).length + 1}
-                onChange={(field, value) => setInterestDraft((current) => ({ ...current, [field]: value }))}
-                onSubmit={handleInterestSubmit}
-              />
-            )}
-            {session.phase === "select-applied" && (
-              <AreaSelectionScreen
-                kind="applied"
-                session={session}
-                selected={appliedDraft}
-                suggestionIds={appliedSuggestions.map((item) => item.areaId)}
-                suggestionReasons={appliedSuggestionReasons}
-                availableAreaIds={allAreaIds}
-                onToggle={(areaId) => toggleArea("applied", areaId)}
-                onContinue={confirmApplied}
-              />
-            )}
-            {session.phase === "select-deepening" && (
-              <AreaSelectionScreen
-                kind="deepening"
-                session={session}
-                selected={deepeningDraft}
-                suggestionIds={deepeningSuggestions.map((item) => item.areaId)}
-                suggestionReasons={deepeningSuggestionReasons}
-                availableAreaIds={deepeningAvailable}
-                onToggle={(areaId) => toggleArea("deepening", areaId)}
-                onContinue={confirmDeepening}
-              />
-            )}
-            {session.phase === "results" && <ResultsScreen session={session} onDownload={handleDownload} onReset={handleReset} />}
           </>
         )}
       </section>

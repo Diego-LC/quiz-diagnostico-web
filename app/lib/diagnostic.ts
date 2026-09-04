@@ -9,9 +9,14 @@ export type Confidence = "guess" | "doubtful" | "sure";
 export type LikertValue = 1 | 2 | 3 | 4 | 5;
 
 export interface DiagnosticResponse {
+  questionId?: string;
   areaId: string;
   level: DiagnosticLevel;
   isCorrect: boolean;
+  awardedPoints?: number;
+  maxPoints?: number;
+  itemType?: "single-best" | "graded-judgment" | "practical";
+  subcompetencyId?: string;
   confidence: Confidence;
   activeSeconds: number;
 }
@@ -26,6 +31,9 @@ export interface AreaInterest {
 export interface ResponseMetrics {
   correct: number;
   total: number;
+  earnedPoints: number;
+  possiblePoints: number;
+  scorePercent: number | null;
   accuracyPercent: number | null;
   highConfidenceWrong: number;
   uncertain: number;
@@ -93,6 +101,9 @@ export interface DiagnosticRecommendations {
 const EMPTY_METRICS: ResponseMetrics = {
   correct: 0,
   total: 0,
+  earnedPoints: 0,
+  possiblePoints: 0,
+  scorePercent: null,
   accuracyPercent: null,
   highConfidenceWrong: 0,
   uncertain: 0,
@@ -127,6 +138,21 @@ const summarize = (
       : 0,
   );
   const correct = responses.filter((response) => response.isCorrect).length;
+  const earnedPoints = responses.reduce((total, response) => {
+    const max = Number.isFinite(response.maxPoints) && (response.maxPoints ?? 0) > 0
+      ? response.maxPoints ?? 1
+      : 1;
+    const earned = Number.isFinite(response.awardedPoints)
+      ? Math.min(max, Math.max(0, response.awardedPoints ?? 0))
+      : response.isCorrect ? max : 0;
+    return total + earned;
+  }, 0);
+  const possiblePoints = responses.reduce((total, response) => {
+    const max = Number.isFinite(response.maxPoints) && (response.maxPoints ?? 0) > 0
+      ? response.maxPoints ?? 1
+      : 1;
+    return total + max;
+  }, 0);
   const highConfidenceWrong = responses.filter(
     (response) => !response.isCorrect && response.confidence === "sure",
   ).length;
@@ -140,6 +166,9 @@ const summarize = (
   return {
     correct,
     total: responses.length,
+    earnedPoints: round(earnedPoints, 2),
+    possiblePoints: round(possiblePoints, 2),
+    scorePercent: possiblePoints > 0 ? round((earnedPoints / possiblePoints) * 100) : null,
     accuracyPercent: round((correct / responses.length) * 100),
     highConfidenceWrong,
     uncertain,
@@ -201,7 +230,7 @@ const normalizedInterest = (interest?: AreaInterest) =>
   clamp01((interestAverage(interest) - 1) / 4);
 
 const accuracyScore = (metric: ResponseMetrics, fallback = 0.5) =>
-  metric.accuracyPercent === null ? fallback : metric.accuracyPercent / 100;
+  metric.scorePercent === null ? fallback : metric.scorePercent / 100;
 
 const uncertaintyScore = (metric: ResponseMetrics) =>
   metric.uncertaintyPercent === null ? 0.5 : metric.uncertaintyPercent / 100;
@@ -337,9 +366,9 @@ const domainScore = (metric: AreaMetrics) => {
 
   for (const level of DIAGNOSTIC_LEVELS) {
     const levelMetric = metric.byLevel[level];
-    if (levelMetric.accuracyPercent === null) continue;
+    if (levelMetric.scorePercent === null) continue;
     totalWeight += weights[level];
-    weightedAccuracy += (levelMetric.accuracyPercent / 100) * weights[level];
+    weightedAccuracy += (levelMetric.scorePercent / 100) * weights[level];
   }
 
   return totalWeight === 0 ? 0 : weightedAccuracy / totalWeight;
@@ -489,4 +518,3 @@ export function buildRecommendations(
     exploreLater: ranked(exploreLater, limit),
   };
 }
-

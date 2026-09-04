@@ -1,12 +1,15 @@
-export const DIAGNOSTIC_SESSION_VERSION = 2 as const;
+export const DIAGNOSTIC_SESSION_VERSION = 3 as const;
 export const DIAGNOSTIC_STORAGE_KEY = "brujula-tic:diagnostic-session";
 
-export type AnswerOption = "A" | "B" | "C";
+export type AnswerOption = "A" | "B" | "C" | "D";
 export type AnswerConfidence = "guess" | "unsure" | "sure";
+export type RouteMode = "panorama" | "recommended" | "deep" | "focused";
 
 export type DiagnosticPhase =
   | "intro"
+  | "route-select"
   | "essential"
+  | "confirmation"
   | "interest"
   | "select-applied"
   | "applied"
@@ -18,10 +21,25 @@ export interface QuestionResponse {
   questionId: string;
   selectedOption: AnswerOption;
   correct: boolean;
+  awardedPoints: number;
+  maxPoints: number;
+  itemVersion: number;
+  bankVersion: string;
+  itemType: "single-best" | "graded-judgment" | "practical";
+  optionOrder: AnswerOption[];
   confidence: AnswerConfidence;
   activeSeconds: number;
   startedAt: string;
   answeredAt: string;
+}
+
+export interface RoutePlanEntry {
+  questionId: string;
+  itemVersion: number;
+  phase: Exclude<DiagnosticPhase, "intro" | "route-select" | "interest" | "select-applied" | "select-deepening" | "results">;
+  areaId: string;
+  reason: string;
+  isConfirmation: boolean;
 }
 
 export type InterestScore = 1 | 2 | 3 | 4 | 5;
@@ -39,6 +57,10 @@ export interface DiagnosticSessionState {
   /** Nombre visible del perfil; se guarda únicamente en el dispositivo. */
   profileName: string;
   phase: DiagnosticPhase;
+  routeMode: RouteMode | null;
+  bankVersion: string;
+  routePlan: RoutePlanEntry[];
+  routeCursor: number;
   responses: Record<string, QuestionResponse>;
   interests: Record<string, AreaInterest>;
   selectedAreas: {
@@ -46,6 +68,10 @@ export interface DiagnosticSessionState {
     deepening: string[];
   };
   currentQuestionId: string | null;
+  /** IDs de preguntas de comprobación adaptativa de la etapa actual. */
+  confirmationIds: string[];
+  confirmationLevel: "essential" | "applied" | "deepening" | null;
+  confirmationReturnPhase: "essential" | "applied" | "deepening" | null;
   activeSecondsTotal: number;
   paused: boolean;
   createdAt: string;
@@ -74,7 +100,9 @@ type UnknownRecord = Record<string, unknown>;
 
 const PHASES = new Set<DiagnosticPhase>([
   "intro",
+  "route-select",
   "essential",
+  "confirmation",
   "interest",
   "select-applied",
   "applied",
@@ -133,9 +161,19 @@ function asPhase(value: unknown): DiagnosticPhase {
 function asAnswerOption(value: unknown): AnswerOption | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toUpperCase();
-  return normalized === "A" || normalized === "B" || normalized === "C"
+  return normalized === "A" || normalized === "B" || normalized === "C" || normalized === "D"
     ? normalized
     : null;
+}
+
+function asRouteMode(value: unknown): RouteMode | null {
+  return typeof value === "string" && ["panorama", "recommended", "deep", "focused"].includes(value)
+    ? (value as RouteMode)
+    : null;
+}
+
+function asItemType(value: unknown): QuestionResponse["itemType"] {
+  return value === "graded-judgment" || value === "practical" ? value : "single-best";
 }
 
 function asConfidence(value: unknown): AnswerConfidence | null {
@@ -175,14 +213,34 @@ function normalizeResponses(
     const questionId = asNonEmptyString(rawResponse.questionId, recordKey);
     const selectedOption = asAnswerOption(rawResponse.selectedOption);
     const confidence = asConfidence(rawResponse.confidence);
-    if (!questionId || !selectedOption || !confidence || typeof rawResponse.correct !== "boolean") {
+    if (!questionId || !selectedOption || !confidence) {
       continue;
     }
+
+    const awardedPoints = asNonNegativeNumber(
+      rawResponse.awardedPoints,
+      rawResponse.correct === true ? 1 : 0,
+    );
+    const maxPoints = Math.max(1, asNonNegativeNumber(rawResponse.maxPoints, 1));
+    const correct = typeof rawResponse.correct === "boolean"
+      ? rawResponse.correct
+      : awardedPoints >= maxPoints;
+    const rawOrder = Array.isArray(rawResponse.optionOrder)
+      ? rawResponse.optionOrder.map(asAnswerOption).filter((value): value is AnswerOption => Boolean(value))
+      : [];
 
     responses[questionId] = {
       questionId,
       selectedOption,
-      correct: rawResponse.correct,
+      correct,
+      awardedPoints: Math.min(awardedPoints, maxPoints),
+      maxPoints,
+      itemVersion: Number.isInteger(rawResponse.itemVersion) && Number(rawResponse.itemVersion) > 0
+        ? Number(rawResponse.itemVersion)
+        : 1,
+      bankVersion: asNonEmptyString(rawResponse.bankVersion, "v1-legacy"),
+      itemType: asItemType(rawResponse.itemType),
+      optionOrder: Array.from(new Set(rawOrder)),
       confidence,
       activeSeconds: asNonNegativeNumber(rawResponse.activeSeconds),
       startedAt: asIsoDate(rawResponse.startedAt, createdAt),
@@ -234,6 +292,10 @@ export function createInitialSession(options: {
     sessionId: asNonEmptyString(options.sessionId, createSessionId()),
     profileName: "",
     phase: "intro",
+    routeMode: null,
+    bankVersion: "v2-draft",
+    routePlan: [],
+    routeCursor: 0,
     responses: {},
     interests: {},
     selectedAreas: {
@@ -241,6 +303,9 @@ export function createInitialSession(options: {
       deepening: [],
     },
     currentQuestionId: null,
+    confirmationIds: [],
+    confirmationLevel: null,
+    confirmationReturnPhase: null,
     activeSecondsTotal: 0,
     paused: false,
     createdAt: timestamp,
@@ -286,6 +351,23 @@ export function normalizeSession(
     sessionId: asNonEmptyString(raw.sessionId, createSessionId()),
     profileName: asNonEmptyString(raw.profileName, ""),
     phase: asPhase(raw.phase),
+    routeMode: asRouteMode(raw.routeMode),
+    bankVersion: asNonEmptyString(raw.bankVersion, rawVersion >= 3 ? "v2-draft" : "v1-legacy"),
+    routePlan: Array.isArray(raw.routePlan)
+      ? raw.routePlan.flatMap((entry): RoutePlanEntry[] => {
+          if (!isRecord(entry) || typeof entry.questionId !== "string" || typeof entry.areaId !== "string") return [];
+          const phase = entry.phase === "essential" || entry.phase === "applied" || entry.phase === "deepening" ? entry.phase : "essential";
+          return [{
+            questionId: entry.questionId,
+            itemVersion: Number.isInteger(entry.itemVersion) && Number(entry.itemVersion) > 0 ? Number(entry.itemVersion) : 1,
+            phase,
+            areaId: entry.areaId,
+            reason: asNonEmptyString(entry.reason, "Ruta seleccionada"),
+            isConfirmation: entry.isConfirmation === true,
+          }];
+        })
+      : [],
+    routeCursor: Math.max(0, Math.floor(asNonNegativeNumber(raw.routeCursor))),
     responses: normalizeResponses(responseSource, createdAt, updatedAt),
     interests: normalizeInterests(interestSource, updatedAt),
     selectedAreas: {
@@ -295,6 +377,15 @@ export function normalizeSession(
     currentQuestionId:
       typeof raw.currentQuestionId === "string" && raw.currentQuestionId.trim()
         ? raw.currentQuestionId.trim()
+        : null,
+    confirmationIds: asUniqueStringArray(raw.confirmationIds),
+    confirmationLevel:
+      raw.confirmationLevel === "essential" || raw.confirmationLevel === "applied" || raw.confirmationLevel === "deepening"
+        ? raw.confirmationLevel
+        : null,
+    confirmationReturnPhase:
+      raw.confirmationReturnPhase === "essential" || raw.confirmationReturnPhase === "applied" || raw.confirmationReturnPhase === "deepening"
+        ? raw.confirmationReturnPhase
         : null,
     activeSecondsTotal: asNonNegativeNumber(
       raw.activeSecondsTotal ?? raw.totalActiveSeconds,
