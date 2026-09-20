@@ -1,9 +1,12 @@
-# Cuestionario diagnóstico mejorado
+# Cuestionario diagnóstico TIC
 
-Comienza en [Instrucciones y recorrido](<00. Instrucciones y recorrido.md>).
+La fuente editable que usa la aplicación es el [Banco v2](<Banco v2/README.md>): 13 áreas, 24 preguntas por área y claves separadas.
 
-El diagnóstico está dividido en 13 módulos. Cada uno contiene cinco preguntas esenciales, cinco aplicadas y cinco de profundización. Las respuestas y explicaciones están separadas en la carpeta [Claves](Claves/), para que puedas responder sin verlas antes de tiempo.
+El recorrido y la plantilla histórica se conservan para consultar el diseño inicial:
 
-Utiliza la [Plantilla de resultados](<99. Plantilla de resultados.md>) para comparar conocimientos, confianza e interés y orientar la elección de un proyecto.
+- [Instrucciones y recorrido v1](<00. Instrucciones y recorrido.md>)
+- [Plantilla de resultados](<99. Plantilla de resultados.md>)
+- [Banco v1: 15 preguntas por área](Áreas/)
+- [Claves v1](Claves/)
 
-Los cuestionarios originales usados como antecedente se conservaron fuera de este repositorio y no fueron modificados.
+El banco v1 no se modifica y queda como antecedente. Para editar preguntas que aparezcan en la aplicación, usa exclusivamente `Banco v2/Áreas` y la clave correspondiente en `Banco v2/Claves`.

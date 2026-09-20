@@ -1,6 +1,8 @@
-# Claves y retroalimentación
+# Claves y retroalimentación — Banco v1 histórico
 
 Consulta estas claves únicamente después de completar el módulo correspondiente.
+
+Las claves del banco que usa la aplicación están en [Banco v2](<../Banco v2/Claves/>).
 
 1. [Programación y resolución de problemas](<01. Programación y resolución de problemas - clave.md>)
 2. [Desarrollo e Ingeniería de Software](<02. Desarrollo e Ingeniería de Software - clave.md>)

@@ -1,6 +1,8 @@
-# Módulos del diagnóstico
+# Módulos del diagnóstico — Banco v1 histórico
 
-Cada archivo contiene 15 preguntas sin la respuesta visible: cinco esenciales, cinco aplicadas y cinco de profundización.
+Cada archivo de este directorio conserva 15 preguntas sin respuesta visible: cinco esenciales, cinco aplicadas y cinco de profundización.
+
+La aplicación usa el [Banco v2 visible y editable](<../Banco v2/README.md>), no estos archivos.
 
 1. [Programación y resolución de problemas](<01. Programación y resolución de problemas.md>)
 2. [Desarrollo e Ingeniería de Software](<02. Desarrollo e Ingeniería de Software.md>)
