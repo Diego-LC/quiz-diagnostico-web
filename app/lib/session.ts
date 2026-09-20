@@ -293,7 +293,7 @@ export function createInitialSession(options: {
     profileName: "",
     phase: "intro",
     routeMode: null,
-    bankVersion: "v2-draft",
+    bankVersion: "v2",
     routePlan: [],
     routeCursor: 0,
     responses: {},
@@ -352,7 +352,7 @@ export function normalizeSession(
     profileName: asNonEmptyString(raw.profileName, ""),
     phase: asPhase(raw.phase),
     routeMode: asRouteMode(raw.routeMode),
-    bankVersion: asNonEmptyString(raw.bankVersion, rawVersion >= 3 ? "v2-draft" : "v1-legacy"),
+    bankVersion: asNonEmptyString(raw.bankVersion, rawVersion >= 3 ? "v2" : "v1-legacy"),
     routePlan: Array.isArray(raw.routePlan)
       ? raw.routePlan.flatMap((entry): RoutePlanEntry[] => {
           if (!isRecord(entry) || typeof entry.questionId !== "string" || typeof entry.areaId !== "string") return [];

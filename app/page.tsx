@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   diagnosticAreas,
   diagnosticQuestions,
+  DIAGNOSTIC_BANK_VERSION,
   questionsById,
   type DiagnosticLevel,
   type DiagnosticOptionKey,
@@ -823,7 +824,7 @@ function QuestionScreen({
         </fieldset>
 
         <p className="shortcut-hint" role="note">
-          Atajos: <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>/<kbd>4</kbd> o <kbd>A</kbd>/<kbd>B</kbd>/<kbd>C</kbd>/<kbd>D</kbd> para responder · <kbd>Q</kbd>/<kbd>G</kbd> al azar · <kbd>W</kbd>/<kbd>D</kbd> dudoso · <kbd>E</kbd>/<kbd>S</kbd> seguro · <kbd>P</kbd> pausar/reanudar.
+          Atajos: <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>/<kbd>4</kbd> o <kbd>A</kbd>/<kbd>B</kbd>/<kbd>C</kbd>/<kbd>D</kbd> para responder · <kbd>Q</kbd>/<kbd>G</kbd> al azar · <kbd>W</kbd> dudoso · <kbd>E</kbd>/<kbd>S</kbd> seguro · <kbd>P</kbd> pausar/reanudar.
         </p>
 
         <footer className="card-actions">
@@ -1894,12 +1895,12 @@ export default function Home() {
         a: "A",
         b: "B",
         c: "C",
+        d: "D",
       };
       const confidenceByKey: Record<string, AnswerConfidence> = {
         q: "guess",
         g: "guess",
         w: "unsure",
-        d: "unsure",
         e: "sure",
         s: "sure",
       };
@@ -1948,7 +1949,7 @@ export default function Home() {
     setSession({
       ...session,
       routeMode: mode,
-      bankVersion: "v2-draft",
+      bankVersion: DIAGNOSTIC_BANK_VERSION,
       routePlan: plan,
       routeCursor: 0,
       selectedAreas: { applied: selectedApplied, deepening: selectedDeepening },
