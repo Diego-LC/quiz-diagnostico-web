@@ -1,0 +1,331 @@
+{
+  "schemaVersion": 1,
+  "bankVersion": "v2",
+  "areas": [
+    {
+      "id": "01-programacion-y-resolucion-de-problemas",
+      "number": 1,
+      "name": "Programación y resolución de problemas",
+      "fileName": "01. Programación y resolución de problemas.md",
+      "keyFileName": "01. Programación y resolución de problemas - clave.md",
+      "subcompetencies": [
+        {
+          "id": "logica",
+          "label": "Lógica y control"
+        },
+        {
+          "id": "estructuras",
+          "label": "Estructuras y datos"
+        },
+        {
+          "id": "pruebas",
+          "label": "Calidad y pruebas"
+        },
+        {
+          "id": "eficiencia",
+          "label": "Eficiencia y recursos"
+        }
+      ]
+    },
+    {
+      "id": "02-desarrollo-e-ingenieria-de-software",
+      "number": 2,
+      "name": "Desarrollo e Ingeniería de Software",
+      "fileName": "02. Desarrollo e Ingeniería de Software.md",
+      "keyFileName": "02. Desarrollo e Ingeniería de Software - clave.md",
+      "subcompetencies": [
+        {
+          "id": "requisitos",
+          "label": "Requisitos"
+        },
+        {
+          "id": "diseno",
+          "label": "Diseño y arquitectura"
+        },
+        {
+          "id": "verificacion",
+          "label": "Verificación y calidad"
+        },
+        {
+          "id": "entrega",
+          "label": "Entrega y mantenimiento"
+        }
+      ]
+    },
+    {
+      "id": "03-bases-de-datos-y-sql",
+      "number": 3,
+      "name": "Bases de Datos y SQL",
+      "fileName": "03. Bases de Datos y SQL.md",
+      "keyFileName": "03. Bases de Datos y SQL - clave.md",
+      "subcompetencies": [
+        {
+          "id": "modelado",
+          "label": "Modelado de datos"
+        },
+        {
+          "id": "sql",
+          "label": "Consultas SQL"
+        },
+        {
+          "id": "transacciones",
+          "label": "Transacciones e integridad"
+        },
+        {
+          "id": "rendimiento",
+          "label": "Rendimiento y operación"
+        }
+      ]
+    },
+    {
+      "id": "04-linux-y-administracion-de-sistemas",
+      "number": 4,
+      "name": "Linux y Administración de Sistemas",
+      "fileName": "04. Linux y Administración de Sistemas.md",
+      "keyFileName": "04. Linux y Administración de Sistemas - clave.md",
+      "subcompetencies": [
+        {
+          "id": "archivos",
+          "label": "Archivos y permisos"
+        },
+        {
+          "id": "procesos",
+          "label": "Procesos y recursos"
+        },
+        {
+          "id": "servicios",
+          "label": "Servicios y red"
+        },
+        {
+          "id": "operacion",
+          "label": "Operación y diagnóstico"
+        }
+      ]
+    },
+    {
+      "id": "05-cloud-y-devops",
+      "number": 5,
+      "name": "Cloud y DevOps",
+      "fileName": "05. Cloud y DevOps.md",
+      "keyFileName": "05. Cloud y DevOps - clave.md",
+      "subcompetencies": [
+        {
+          "id": "arquitectura",
+          "label": "Arquitectura cloud"
+        },
+        {
+          "id": "entrega",
+          "label": "Entrega y automatización"
+        },
+        {
+          "id": "observabilidad",
+          "label": "Observabilidad"
+        },
+        {
+          "id": "seguridad-costos",
+          "label": "Seguridad y costos"
+        }
+      ]
+    },
+    {
+      "id": "06-sistemas-distribuidos",
+      "number": 6,
+      "name": "Sistemas Distribuidos",
+      "fileName": "06. Sistemas Distribuidos.md",
+      "keyFileName": "06. Sistemas Distribuidos - clave.md",
+      "subcompetencies": [
+        {
+          "id": "fallas",
+          "label": "Fallos y disponibilidad"
+        },
+        {
+          "id": "mensajeria",
+          "label": "Mensajería y coordinación"
+        },
+        {
+          "id": "consistencia",
+          "label": "Consistencia de datos"
+        },
+        {
+          "id": "resiliencia",
+          "label": "Resiliencia y recuperación"
+        }
+      ]
+    },
+    {
+      "id": "07-ingenieria-de-datos",
+      "number": 7,
+      "name": "Ingeniería de Datos",
+      "fileName": "07. Ingeniería de Datos.md",
+      "keyFileName": "07. Ingeniería de Datos - clave.md",
+      "subcompetencies": [
+        {
+          "id": "pipelines",
+          "label": "Pipelines de datos"
+        },
+        {
+          "id": "calidad",
+          "label": "Calidad de datos"
+        },
+        {
+          "id": "streaming",
+          "label": "Procesamiento continuo"
+        },
+        {
+          "id": "gobierno",
+          "label": "Gobierno y uso responsable"
+        }
+      ]
+    },
+    {
+      "id": "08-machine-learning-y-mlops",
+      "number": 8,
+      "name": "Machine Learning y MLOps",
+      "fileName": "08. Machine Learning y MLOps.md",
+      "keyFileName": "08. Machine Learning y MLOps - clave.md",
+      "subcompetencies": [
+        {
+          "id": "datos",
+          "label": "Datos y preparación"
+        },
+        {
+          "id": "modelos",
+          "label": "Modelos y entrenamiento"
+        },
+        {
+          "id": "validez",
+          "label": "Evaluación y validez"
+        },
+        {
+          "id": "operacion",
+          "label": "Operación y monitoreo"
+        }
+      ]
+    },
+    {
+      "id": "09-ia-generativa-y-sistemas-de-agentes",
+      "number": 9,
+      "name": "IA Generativa y Sistemas de Agentes",
+      "fileName": "09. IA Generativa y Sistemas de Agentes.md",
+      "keyFileName": "09. IA Generativa y Sistemas de Agentes - clave.md",
+      "subcompetencies": [
+        {
+          "id": "llm-rag",
+          "label": "Modelos, contexto y RAG"
+        },
+        {
+          "id": "herramientas",
+          "label": "Herramientas y acciones"
+        },
+        {
+          "id": "evaluacion",
+          "label": "Evaluación y seguridad"
+        },
+        {
+          "id": "memoria",
+          "label": "Memoria y control de estado"
+        }
+      ]
+    },
+    {
+      "id": "10-iot-y-sistemas-ciberfisicos",
+      "number": 10,
+      "name": "IoT y Sistemas Ciberfísicos",
+      "fileName": "10. IoT y Sistemas Ciberfísicos.md",
+      "keyFileName": "10. IoT y Sistemas Ciberfísicos - clave.md",
+      "subcompetencies": [
+        {
+          "id": "sensores",
+          "label": "Sensores y datos físicos"
+        },
+        {
+          "id": "conectividad",
+          "label": "Conectividad"
+        },
+        {
+          "id": "flota",
+          "label": "Flota y operación"
+        },
+        {
+          "id": "seguridad-fisica",
+          "label": "Seguridad y efecto físico"
+        }
+      ]
+    },
+    {
+      "id": "11-ux-accesibilidad-y-diseno-de-interaccion",
+      "number": 11,
+      "name": "UX, Accesibilidad y Diseño de Interacción",
+      "fileName": "11. UX, Accesibilidad y Diseño de Interacción.md",
+      "keyFileName": "11. UX, Accesibilidad y Diseño de Interacción - clave.md",
+      "subcompetencies": [
+        {
+          "id": "investigacion",
+          "label": "Investigación con personas"
+        },
+        {
+          "id": "interaccion",
+          "label": "Diseño de interacción"
+        },
+        {
+          "id": "usabilidad",
+          "label": "Usabilidad y evaluación"
+        },
+        {
+          "id": "accesibilidad",
+          "label": "Accesibilidad e inclusión"
+        }
+      ]
+    },
+    {
+      "id": "12-gestion-de-proyectos-y-productos-tic",
+      "number": 12,
+      "name": "Gestión de Proyectos y Productos TIC",
+      "fileName": "12. Gestión de Proyectos y Productos TIC.md",
+      "keyFileName": "12. Gestión de Proyectos y Productos TIC - clave.md",
+      "subcompetencies": [
+        {
+          "id": "alcance",
+          "label": "Alcance y necesidades"
+        },
+        {
+          "id": "planificacion",
+          "label": "Planificación y riesgos"
+        },
+        {
+          "id": "priorizacion",
+          "label": "Priorización y decisiones"
+        },
+        {
+          "id": "resultados",
+          "label": "Resultados y aprendizaje"
+        }
+      ]
+    },
+    {
+      "id": "13-ciberseguridad-y-privacidad",
+      "number": 13,
+      "name": "Ciberseguridad y Privacidad",
+      "fileName": "13. Ciberseguridad y Privacidad.md",
+      "keyFileName": "13. Ciberseguridad y Privacidad - clave.md",
+      "subcompetencies": [
+        {
+          "id": "identidad",
+          "label": "Identidad y acceso"
+        },
+        {
+          "id": "desarrollo-seguro",
+          "label": "Desarrollo y configuración segura"
+        },
+        {
+          "id": "incidentes",
+          "label": "Incidentes y continuidad"
+        },
+        {
+          "id": "privacidad",
+          "label": "Privacidad y datos personales"
+        }
+      ]
+    }
+  ]
+}

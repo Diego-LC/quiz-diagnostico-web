@@ -12,7 +12,8 @@
     "start": "vinext start",
     "data:generate": "node scripts/generate-question-data.mjs",
     "data:generate:v2": "node scripts/generate-question-data-v2.mjs",
-    "test": "npm run build && node --test tests/diagnostic-data.test.mjs",
+    "data:check:v2": "node scripts/generate-question-data-v2.mjs --check",
+    "test": "npm run data:check:v2 && npm run build && node --test tests/diagnostic-data.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
